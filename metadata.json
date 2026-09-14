@@ -1,0 +1,6 @@
+{
+  "name": "SportsZone - Live Scores, Fixtures & Stats",
+  "description": "Full-stack sports platform with live scores, upcoming fixtures, tournaments, standings, statistics, team/player rosters, highlights, and sports news.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
