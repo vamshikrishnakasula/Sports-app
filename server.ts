@@ -1,18 +1,16 @@
 import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
-import { MongoClient, Db } from 'mongodb';
+import { MongoClient, Db, Collection } from 'mongodb';
+import { GoogleGenAI, Type } from '@google/genai';
 import {
-  Match,
-  Tournament,
-  StandingRow,
-  StatLeader,
-  Player,
-  Team,
-  SportsNewsUpdate,
-  MatchHighlight,
-  UserProfile,
-  SportType,
+  MoodLog,
+  PracticeEntry,
+  ChatMessage,
+  OverthinkingAnalysis,
+  MoodChangerItem,
+  AppServerStatus,
+  PracticeType,
 } from './src/types';
 
 const app = express();
@@ -22,1522 +20,879 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // -------------------------------------------------------------
-// SEED DATA FOR ALL SPORTS
+// IN-MEMORY SEED DATA & FALLBACK STORE (In case MongoDB is connecting or URI not supplied)
 // -------------------------------------------------------------
 
-const seedTournaments: Tournament[] = [
+let memoryMoods: MoodLog[] = [
   {
-    id: 'tour_ucl',
-    name: 'UEFA Champions League',
-    sport: 'football',
-    logo: 'https://images.unsplash.com/photo-1508098682722-e99c43a406b2?w=100&auto=format&fit=crop&q=80',
-    season: '2025/26',
-    countryOrRegion: 'Europe',
-    teamsCount: 36,
-    currentLeader: 'Real Madrid',
-    status: 'In Progress',
-    startDate: '2025-09-16',
-    endDate: '2026-05-30',
+    id: 'm-1',
+    mood: 'anxious',
+    score: 2,
+    emotionTags: ['Work/Study', 'Overthinking', 'Fatigue'],
+    note: 'Feeling overwhelmed with upcoming deadlines. Mind keeps spinning about worst-case scenarios.',
+    timestamp: new Date(Date.now() - 3600000 * 4).toISOString(),
   },
   {
-    id: 'tour_epl',
-    name: 'English Premier League',
-    sport: 'football',
-    logo: 'https://images.unsplash.com/photo-1522778119026-d647f0596c20?w=100&auto=format&fit=crop&q=80',
-    season: '2025/26',
-    countryOrRegion: 'England',
-    teamsCount: 20,
-    currentLeader: 'Arsenal',
-    status: 'In Progress',
-    startDate: '2025-08-15',
-    endDate: '2026-05-24',
+    id: 'm-2',
+    mood: 'okay',
+    score: 3,
+    emotionTags: ['Routine', 'Quiet'],
+    note: 'Took a short walk outside during lunch break. Calmed my nerves slightly.',
+    timestamp: new Date(Date.now() - 3600000 * 24).toISOString(),
   },
   {
-    id: 'tour_ipl',
-    name: 'Indian Premier League (IPL)',
-    sport: 'cricket',
-    logo: 'https://images.unsplash.com/photo-1531415074868-836332ff4296?w=100&auto=format&fit=crop&q=80',
-    season: '2026',
-    countryOrRegion: 'India',
-    teamsCount: 10,
-    currentLeader: 'Chennai Super Kings',
-    status: 'In Progress',
-    startDate: '2026-03-22',
-    endDate: '2026-05-28',
-  },
-  {
-    id: 'tour_wtc',
-    name: 'ICC World Test Championship',
-    sport: 'cricket',
-    logo: 'https://images.unsplash.com/photo-1540747913346-19e32dc3e97e?w=100&auto=format&fit=crop&q=80',
-    season: '2025-2027',
-    countryOrRegion: 'Global',
-    teamsCount: 9,
-    currentLeader: 'India',
-    status: 'In Progress',
-    startDate: '2025-06-01',
-    endDate: '2027-06-15',
-  },
-  {
-    id: 'tour_nba',
-    name: 'NBA Championship',
-    sport: 'basketball',
-    logo: 'https://images.unsplash.com/photo-1546519638-68e109498ffc?w=100&auto=format&fit=crop&q=80',
-    season: '2025-26',
-    countryOrRegion: 'USA / Canada',
-    teamsCount: 30,
-    currentLeader: 'Boston Celtics',
-    status: 'In Progress',
-    startDate: '2025-10-21',
-    endDate: '2026-06-20',
-  },
-  {
-    id: 'tour_wimbledon',
-    name: 'The Championships, Wimbledon',
-    sport: 'tennis',
-    logo: 'https://images.unsplash.com/photo-1595435934249-5df7ed86e1c0?w=100&auto=format&fit=crop&q=80',
-    season: '2026',
-    countryOrRegion: 'United Kingdom',
-    teamsCount: 128,
-    currentLeader: 'Carlos Alcaraz',
-    status: 'In Progress',
-    startDate: '2026-06-29',
-    endDate: '2026-07-12',
-  },
-  {
-    id: 'tour_f1',
-    name: 'Formula 1 World Championship',
-    sport: 'formula1',
-    logo: 'https://images.unsplash.com/photo-1568605117036-5fe5e7bab0b7?w=100&auto=format&fit=crop&q=80',
-    season: '2026',
-    countryOrRegion: 'Global',
-    teamsCount: 10,
-    currentLeader: 'Max Verstappen',
-    status: 'In Progress',
-    startDate: '2026-03-01',
-    endDate: '2026-11-29',
+    id: 'm-3',
+    mood: 'good',
+    score: 4,
+    emotionTags: ['Gratitude', 'Friends'],
+    note: 'Had a warm video call with an old friend. Felt listened to.',
+    timestamp: new Date(Date.now() - 3600000 * 48).toISOString(),
   },
 ];
 
-const seedMatches: Match[] = [
-  // --- CRICKET LIVE ---
+let memoryPractices: PracticeEntry[] = [
   {
-    id: 'match_cricket_1',
-    sport: 'cricket',
-    tournamentId: 'tour_ipl',
-    tournamentName: 'Indian Premier League (IPL)',
-    homeTeam: {
-      id: 'team_csk',
-      name: 'Chennai Super Kings',
-      shortName: 'CSK',
-      logo: 'https://images.unsplash.com/photo-1531415074868-836332ff4296?w=100&auto=format&fit=crop&q=80',
-    },
-    awayTeam: {
-      id: 'team_mi',
-      name: 'Mumbai Indians',
-      shortName: 'MI',
-      logo: 'https://images.unsplash.com/photo-1540747913346-19e32dc3e97e?w=100&auto=format&fit=crop&q=80',
-    },
-    status: 'live',
-    startTime: 'Today, 19:30 IST',
-    venue: 'M. A. Chidambaram Stadium, Chennai',
-    score: {
-      homeScore: '182/4',
-      awayScore: '176/7',
-      periodOrOvers: '19.2 ov',
-      currentServerOrStriker: 'Ruturaj Gaikwad 68* (42b), Ravindra Jadeja 24* (11b)',
-      summaryNote: 'CSK need 5 runs in 4 balls to win',
-      details: {
-        homeInnings: '182/4 (19.2 ov, Target: 181)',
-        awayInnings: '176/7 (20.0 ov)',
-      },
-    },
-    events: [
-      { time: '19.2', type: 'boundary', player: 'Ravindra Jadeja', description: 'FOUR! Smashed through extra cover with pure authority.' },
-      { time: '19.1', type: 'comment', player: 'Jasprit Bumrah', description: 'Dot ball! Yorked right on the toes of Jadeja.' },
-      { time: '18.4', type: 'wicket', player: 'Shivam Dube', description: 'WICKET! Dube c Rohit b Bumrah 34 (16) - caught at mid-wicket.' },
-      { time: '18.2', type: 'boundary', player: 'Shivam Dube', description: 'SIX! Massive pull over deep square leg into the stands.' },
-    ],
-    hasHighlights: true,
-  },
-  // --- CRICKET TEST LIVE ---
-  {
-    id: 'match_cricket_2',
-    sport: 'cricket',
-    tournamentId: 'tour_wtc',
-    tournamentName: 'ICC World Test Championship',
-    homeTeam: {
-      id: 'team_ind',
-      name: 'India',
-      shortName: 'IND',
-      logo: 'https://images.unsplash.com/photo-1540747913346-19e32dc3e97e?w=100&auto=format&fit=crop&q=80',
-    },
-    awayTeam: {
-      id: 'team_aus',
-      name: 'Australia',
-      shortName: 'AUS',
-      logo: 'https://images.unsplash.com/photo-1517649763962-0c623266ddc0?w=100&auto=format&fit=crop&q=80',
-    },
-    status: 'live',
-    startTime: 'Day 3, Session 2',
-    venue: 'Melbourne Cricket Ground, Melbourne',
-    score: {
-      homeScore: '298/4',
-      awayScore: '315',
-      periodOrOvers: '84.4 ov',
-      currentServerOrStriker: 'Virat Kohli 114* (188b), Rishabh Pant 42* (38b)',
-      summaryNote: 'India trail by 17 runs with 6 wickets in hand',
-      details: {
-        homeInnings: '298/4 (84.4 ov)',
-        awayInnings: '315 all out (94.2 ov)',
-      },
-    },
-    events: [
-      { time: '84.4', type: 'boundary', player: 'Virat Kohli', description: 'FOUR! Exquisite cover drive racing to the boundary.' },
-      { time: '81.1', type: 'comment', player: 'Pat Cummins', description: 'New ball taken by Australian captain Pat Cummins.' },
-      { time: '74.3', type: 'boundary', player: 'Virat Kohli', description: 'CENTURY! 100 up for Virat Kohli with a trademark flick to mid-wicket.' },
-    ],
-    hasHighlights: true,
-  },
-
-  // --- FOOTBALL LIVE ---
-  {
-    id: 'match_football_1',
-    sport: 'football',
-    tournamentId: 'tour_ucl',
-    tournamentName: 'UEFA Champions League',
-    homeTeam: {
-      id: 'team_rma',
-      name: 'Real Madrid',
-      shortName: 'RMA',
-      logo: 'https://images.unsplash.com/photo-1508098682722-e99c43a406b2?w=100&auto=format&fit=crop&q=80',
-    },
-    awayTeam: {
-      id: 'team_mci',
-      name: 'Manchester City',
-      shortName: 'MCI',
-      logo: 'https://images.unsplash.com/photo-1522778119026-d647f0596c20?w=100&auto=format&fit=crop&q=80',
-    },
-    status: 'live',
-    startTime: '20:00 CET',
-    venue: 'Santiago Bernabéu, Madrid',
-    score: {
-      homeScore: 2,
-      awayScore: 1,
-      periodOrOvers: "73'",
-      summaryNote: 'Agg: 4 - 3 | High intensity second half in Madrid',
-    },
-    events: [
-      { time: "71'", type: 'goal', player: 'Vinícius Jr.', description: 'GOAL! Sensational solo counter-attack strike inside the near post.' },
-      { time: "56'", type: 'goal', player: 'Erling Haaland', description: 'GOAL! Header from Kevin De Bruyne corner kick.' },
-      { time: "34'", type: 'goal', player: 'Jude Bellingham', description: 'GOAL! Calm chip over the onrushing goalkeeper.' },
-      { time: "18'", type: 'card', player: 'Rodri', description: 'Yellow Card for tactical foul in midfield.' },
-    ],
-    hasHighlights: true,
-  },
-  // --- FOOTBALL LIVE 2 ---
-  {
-    id: 'match_football_2',
-    sport: 'football',
-    tournamentId: 'tour_epl',
-    tournamentName: 'English Premier League',
-    homeTeam: {
-      id: 'team_ars',
-      name: 'Arsenal',
-      shortName: 'ARS',
-      logo: 'https://images.unsplash.com/photo-1489944440615-453fc2b6a9a9?w=100&auto=format&fit=crop&q=80',
-    },
-    awayTeam: {
-      id: 'team_liv',
-      name: 'Liverpool',
-      shortName: 'LIV',
-      logo: 'https://images.unsplash.com/photo-1579952363873-27f3bade9f55?w=100&auto=format&fit=crop&q=80',
-    },
-    status: 'live',
-    startTime: '16:30 BST',
-    venue: 'Emirates Stadium, London',
-    score: {
-      homeScore: 1,
-      awayScore: 1,
-      periodOrOvers: "58'",
-      summaryNote: 'Premier League top-of-the-table clash',
-    },
-    events: [
-      { time: "54'", type: 'goal', player: 'Mohamed Salah', description: 'GOAL! Curling finish into the top left corner.' },
-      { time: "22'", type: 'goal', player: 'Bukayo Saka', description: 'GOAL! Cuts inside onto his left foot and beats the keeper.' },
-    ],
-    hasHighlights: true,
-  },
-
-  // --- BASKETBALL LIVE ---
-  {
-    id: 'match_basketball_1',
-    sport: 'basketball',
-    tournamentId: 'tour_nba',
-    tournamentName: 'NBA Championship',
-    homeTeam: {
-      id: 'team_bos',
-      name: 'Boston Celtics',
-      shortName: 'BOS',
-      logo: 'https://images.unsplash.com/photo-1546519638-68e109498ffc?w=100&auto=format&fit=crop&q=80',
-    },
-    awayTeam: {
-      id: 'team_lal',
-      name: 'Los Angeles Lakers',
-      shortName: 'LAL',
-      logo: 'https://images.unsplash.com/photo-1574629810360-7efbbe195018?w=100&auto=format&fit=crop&q=80',
-    },
-    status: 'live',
-    startTime: '19:30 EST',
-    venue: 'TD Garden, Boston',
-    score: {
-      homeScore: 104,
-      awayScore: 101,
-      periodOrOvers: 'Q4 02:18',
-      summaryNote: 'Clutch time at TD Garden! 1 possession game.',
-      details: {
-        homeBreakdown: [28, 27, 26, 23],
-        awayBreakdown: [24, 30, 25, 22],
-      },
-    },
-    events: [
-      { time: '02:18', type: 'basket', player: 'Jayson Tatum', description: 'Stepback 3-pointer makes it 104-101 Celtics!' },
-      { time: '02:44', type: 'basket', player: 'LeBron James', description: 'LeBron drives the lane for a powerful reverse layup.' },
-      { time: '03:15', type: 'basket', player: 'Jaylen Brown', description: 'Midrange jumper from the elbow.' },
-    ],
-    hasHighlights: true,
-  },
-
-  // --- TENNIS LIVE ---
-  {
-    id: 'match_tennis_1',
-    sport: 'tennis',
-    tournamentId: 'tour_wimbledon',
-    tournamentName: 'The Championships, Wimbledon',
-    homeTeam: {
-      id: 'player_alcaraz',
-      name: 'Carlos Alcaraz (ESP)',
-      shortName: 'ALC',
-      logo: 'https://images.unsplash.com/photo-1595435934249-5df7ed86e1c0?w=100&auto=format&fit=crop&q=80',
-    },
-    awayTeam: {
-      id: 'player_sinner',
-      name: 'Jannik Sinner (ITA)',
-      shortName: 'SIN',
-      logo: 'https://images.unsplash.com/photo-1595435934249-5df7ed86e1c0?w=100&auto=format&fit=crop&q=80',
-    },
-    status: 'live',
-    startTime: '14:00 BST',
-    venue: 'Centre Court, Wimbledon',
-    score: {
-      homeScore: '2',
-      awayScore: '1',
-      periodOrOvers: 'Set 4 (4-3)',
-      currentServerOrStriker: 'Alcaraz serving (40-30)',
-      summaryNote: 'Sets: [6-4, 3-6, 7-6, 4-3] | Semi-Final thrilling battle',
-      details: {
-        homeBreakdown: [6, 3, 7, 4],
-        awayBreakdown: [4, 6, 6, 3],
-      },
-    },
-    events: [
-      { time: 'Set 4 G7', type: 'break', player: 'Carlos Alcaraz', description: 'Alcaraz unleashes 102mph forehand winner down the line.' },
-      { time: 'Set 4 G6', type: 'comment', player: 'Jannik Sinner', description: 'Sinner holds serve at love with an ace out wide.' },
-    ],
-    hasHighlights: true,
-  },
-
-  // --- UPCOMING MATCHES ---
-  {
-    id: 'match_cricket_up_1',
-    sport: 'cricket',
-    tournamentId: 'tour_ipl',
-    tournamentName: 'Indian Premier League (IPL)',
-    homeTeam: {
-      id: 'team_rcb',
-      name: 'Royal Challengers Bengaluru',
-      shortName: 'RCB',
-      logo: 'https://images.unsplash.com/photo-1531415074868-836332ff4296?w=100&auto=format&fit=crop&q=80',
-    },
-    awayTeam: {
-      id: 'team_kkr',
-      name: 'Kolkata Knight Riders',
-      shortName: 'KKR',
-      logo: 'https://images.unsplash.com/photo-1540747913346-19e32dc3e97e?w=100&auto=format&fit=crop&q=80',
-    },
-    status: 'upcoming',
-    startTime: 'Tomorrow, 19:30 IST',
-    venue: 'M. Chinnaswamy Stadium, Bengaluru',
-    score: {
-      homeScore: '-',
-      awayScore: '-',
-      summaryNote: 'Match 42 • Pitch report: High scoring venue expected',
-    },
+    id: 'p-1',
+    type: 'gratitude',
+    title: 'Morning Appreciation',
+    content: '1. The aroma of warm coffee in the early morning.\n2. A quiet room where I can breathe slowly.\n3. My body doing its best to carry me through this week.',
+    timestamp: new Date(Date.now() - 3600000 * 12).toISOString(),
+    moodAssociated: 'good',
   },
   {
-    id: 'match_football_up_1',
-    sport: 'football',
-    tournamentId: 'tour_ucl',
-    tournamentName: 'UEFA Champions League',
-    homeTeam: {
-      id: 'team_fcb',
-      name: 'FC Barcelona',
-      shortName: 'BAR',
-      logo: 'https://images.unsplash.com/photo-1508098682722-e99c43a406b2?w=100&auto=format&fit=crop&q=80',
-    },
-    awayTeam: {
-      id: 'team_bay',
-      name: 'Bayern Munich',
-      shortName: 'BAY',
-      logo: 'https://images.unsplash.com/photo-1522778119026-d647f0596c20?w=100&auto=format&fit=crop&q=80',
-    },
-    status: 'upcoming',
-    startTime: 'Wed, 21:00 CET',
-    venue: 'Spotify Camp Nou, Barcelona',
-    score: {
-      homeScore: '-',
-      awayScore: '-',
-      summaryNote: 'Quarter-Final 2nd Leg • Blockbuster clash',
-    },
+    id: 'p-2',
+    type: 'affirmation',
+    title: 'Reassurance on Uncertainty',
+    content: 'I do not have to figure out my entire future today. I only need to take the next gentle, honest step.',
+    timestamp: new Date(Date.now() - 3600000 * 20).toISOString(),
+    moodAssociated: 'anxious',
   },
   {
-    id: 'match_basketball_up_1',
-    sport: 'basketball',
-    tournamentId: 'tour_nba',
-    tournamentName: 'NBA Championship',
-    homeTeam: {
-      id: 'team_gsw',
-      name: 'Golden State Warriors',
-      shortName: 'GSW',
-      logo: 'https://images.unsplash.com/photo-1546519638-68e109498ffc?w=100&auto=format&fit=crop&q=80',
-    },
-    awayTeam: {
-      id: 'team_den',
-      name: 'Denver Nuggets',
-      shortName: 'DEN',
-      logo: 'https://images.unsplash.com/photo-1574629810360-7efbbe195018?w=100&auto=format&fit=crop&q=80',
-    },
-    status: 'upcoming',
-    startTime: 'Tomorrow, 22:00 EST',
-    venue: 'Chase Center, San Francisco',
-    score: {
-      homeScore: '-',
-      awayScore: '-',
-      summaryNote: 'Curry vs Jokić • Western Conference showdown',
-    },
-  },
-  {
-    id: 'match_f1_up_1',
-    sport: 'formula1',
-    tournamentId: 'tour_f1',
-    tournamentName: 'Formula 1 World Championship',
-    homeTeam: {
-      id: 'team_f1_monaco',
-      name: 'Monaco Grand Prix',
-      shortName: 'MON',
-      logo: 'https://images.unsplash.com/photo-1568605117036-5fe5e7bab0b7?w=100&auto=format&fit=crop&q=80',
-    },
-    awayTeam: {
-      id: 'team_f1_grid',
-      name: '20 Drivers Grid',
-      shortName: 'F1',
-      logo: 'https://images.unsplash.com/photo-1568605117036-5fe5e7bab0b7?w=100&auto=format&fit=crop&q=80',
-    },
-    status: 'upcoming',
-    startTime: 'Sunday, 15:00 CEST',
-    venue: 'Circuit de Monaco, Monte Carlo',
-    score: {
-      homeScore: 'Pole',
-      awayScore: '78 Laps',
-      summaryNote: 'Qualifying completed: Verstappen P1, Leclerc P2, Norris P3',
-    },
-  },
-
-  // --- COMPLETED MATCHES ---
-  {
-    id: 'match_football_comp_1',
-    sport: 'football',
-    tournamentId: 'tour_epl',
-    tournamentName: 'English Premier League',
-    homeTeam: {
-      id: 'team_mci',
-      name: 'Manchester City',
-      shortName: 'MCI',
-      logo: 'https://images.unsplash.com/photo-1522778119026-d647f0596c20?w=100&auto=format&fit=crop&q=80',
-    },
-    awayTeam: {
-      id: 'team_che',
-      name: 'Chelsea',
-      shortName: 'CHE',
-      logo: 'https://images.unsplash.com/photo-1508098682722-e99c43a406b2?w=100&auto=format&fit=crop&q=80',
-    },
-    status: 'completed',
-    startTime: 'Yesterday',
-    venue: 'Etihad Stadium, Manchester',
-    score: {
-      homeScore: 3,
-      awayScore: 1,
-      periodOrOvers: 'Full Time',
-      summaryNote: 'Man City secured 3 crucial points at home',
-    },
-    events: [
-      { time: "88'", type: 'goal', player: 'Phil Foden', description: 'Goal! Foden seals the victory from edge of box.' },
-      { time: "62'", type: 'goal', player: 'Erling Haaland', description: 'Goal! Powerful header past the keeper.' },
-      { time: "41'", type: 'goal', player: 'Cole Palmer', description: 'Goal! Chelsea pulls one back with precision penalty.' },
-      { time: "12'", type: 'goal', player: 'Kevin De Bruyne', description: 'Goal! Magnificent free kick into top corner.' },
-    ],
-    hasHighlights: true,
-  },
-  {
-    id: 'match_cricket_comp_1',
-    sport: 'cricket',
-    tournamentId: 'tour_ipl',
-    tournamentName: 'Indian Premier League (IPL)',
-    homeTeam: {
-      id: 'team_rcb',
-      name: 'Royal Challengers Bengaluru',
-      shortName: 'RCB',
-      logo: 'https://images.unsplash.com/photo-1531415074868-836332ff4296?w=100&auto=format&fit=crop&q=80',
-    },
-    awayTeam: {
-      id: 'team_dc',
-      name: 'Delhi Capitals',
-      shortName: 'DC',
-      logo: 'https://images.unsplash.com/photo-1540747913346-19e32dc3e97e?w=100&auto=format&fit=crop&q=80',
-    },
-    status: 'completed',
-    startTime: '2 days ago',
-    venue: 'M. Chinnaswamy Stadium, Bengaluru',
-    score: {
-      homeScore: '198/5',
-      awayScore: '184/8',
-      periodOrOvers: '20 ov',
-      summaryNote: 'RCB won by 14 runs • Player of the Match: Virat Kohli (83 off 48)',
-    },
-    hasHighlights: true,
+    id: 'p-3',
+    type: 'journal',
+    title: 'Letting Go of Perfectionism',
+    content: 'Today I noticed a harsh inner critic telling me I was falling behind. I stopped and reminded myself that rest is not a reward I have to earn—it is a biological requirement.',
+    promptUsed: 'What is one expectation you can give yourself permission to release today?',
+    timestamp: new Date(Date.now() - 3600000 * 36).toISOString(),
+    moodAssociated: 'okay',
   },
 ];
 
-const seedStandings: StandingRow[] = [
-  // EPL Table
-  { position: 1, teamId: 'team_ars', teamName: 'Arsenal', teamLogo: 'https://images.unsplash.com/photo-1489944440615-453fc2b6a9a9?w=100&auto=format&fit=crop&q=80', sport: 'football', tournamentId: 'tour_epl', played: 28, won: 20, drawn: 5, lost: 3, points: 65, goalDiffOrNRR: '+41', form: ['W', 'W', 'D', 'W', 'W'] },
-  { position: 2, teamId: 'team_mci', teamName: 'Manchester City', teamLogo: 'https://images.unsplash.com/photo-1522778119026-d647f0596c20?w=100&auto=format&fit=crop&q=80', sport: 'football', tournamentId: 'tour_epl', played: 28, won: 19, drawn: 6, lost: 3, points: 63, goalDiffOrNRR: '+39', form: ['W', 'W', 'W', 'D', 'W'] },
-  { position: 3, teamId: 'team_liv', teamName: 'Liverpool', teamLogo: 'https://images.unsplash.com/photo-1579952363873-27f3bade9f55?w=100&auto=format&fit=crop&q=80', sport: 'football', tournamentId: 'tour_epl', played: 28, won: 18, drawn: 7, lost: 3, points: 61, goalDiffOrNRR: '+35', form: ['D', 'W', 'W', 'L', 'W'] },
-  { position: 4, teamId: 'team_ast', teamName: 'Aston Villa', teamLogo: 'https://images.unsplash.com/photo-1508098682722-e99c43a406b2?w=100&auto=format&fit=crop&q=80', sport: 'football', tournamentId: 'tour_epl', played: 28, won: 16, drawn: 5, lost: 7, points: 53, goalDiffOrNRR: '+18', form: ['W', 'L', 'W', 'W', 'D'] },
-  { position: 5, teamId: 'team_che', teamName: 'Chelsea', teamLogo: 'https://images.unsplash.com/photo-1508098682722-e99c43a406b2?w=100&auto=format&fit=crop&q=80', sport: 'football', tournamentId: 'tour_epl', played: 28, won: 14, drawn: 6, lost: 8, points: 48, goalDiffOrNRR: '+12', form: ['L', 'W', 'D', 'W', 'L'] },
-  { position: 6, teamId: 'team_tot', teamName: 'Tottenham', teamLogo: 'https://images.unsplash.com/photo-1522778119026-d647f0596c20?w=100&auto=format&fit=crop&q=80', sport: 'football', tournamentId: 'tour_epl', played: 28, won: 14, drawn: 5, lost: 9, points: 47, goalDiffOrNRR: '+11', form: ['W', 'L', 'L', 'W', 'W'] },
-
-  // IPL Table
-  { position: 1, teamId: 'team_csk', teamName: 'Chennai Super Kings', teamLogo: 'https://images.unsplash.com/photo-1531415074868-836332ff4296?w=100&auto=format&fit=crop&q=80', sport: 'cricket', tournamentId: 'tour_ipl', played: 10, won: 7, lost: 3, points: 14, goalDiffOrNRR: '+0.745', form: ['W', 'W', 'L', 'W', 'W'] },
-  { position: 2, teamId: 'team_kkr', teamName: 'Kolkata Knight Riders', teamLogo: 'https://images.unsplash.com/photo-1540747913346-19e32dc3e97e?w=100&auto=format&fit=crop&q=80', sport: 'cricket', tournamentId: 'tour_ipl', played: 10, won: 7, lost: 3, points: 14, goalDiffOrNRR: '+0.680', form: ['W', 'L', 'W', 'W', 'W'] },
-  { position: 3, teamId: 'team_rcb', teamName: 'Royal Challengers Bengaluru', teamLogo: 'https://images.unsplash.com/photo-1531415074868-836332ff4296?w=100&auto=format&fit=crop&q=80', sport: 'cricket', tournamentId: 'tour_ipl', played: 10, won: 6, lost: 4, points: 12, goalDiffOrNRR: '+0.320', form: ['W', 'W', 'W', 'L', 'W'] },
-  { position: 4, teamId: 'team_mi', teamName: 'Mumbai Indians', teamLogo: 'https://images.unsplash.com/photo-1540747913346-19e32dc3e97e?w=100&auto=format&fit=crop&q=80', sport: 'cricket', tournamentId: 'tour_ipl', played: 10, won: 5, lost: 5, points: 10, goalDiffOrNRR: '+0.115', form: ['L', 'W', 'L', 'W', 'L'] },
-  { position: 5, teamId: 'team_srh', teamName: 'Sunrisers Hyderabad', teamLogo: 'https://images.unsplash.com/photo-1531415074868-836332ff4296?w=100&auto=format&fit=crop&q=80', sport: 'cricket', tournamentId: 'tour_ipl', played: 10, won: 5, lost: 5, points: 10, goalDiffOrNRR: '+0.080', form: ['L', 'L', 'W', 'W', 'L'] },
-
-  // NBA Standings
-  { position: 1, teamId: 'team_bos', teamName: 'Boston Celtics', teamLogo: 'https://images.unsplash.com/photo-1546519638-68e109498ffc?w=100&auto=format&fit=crop&q=80', sport: 'basketball', tournamentId: 'tour_nba', played: 64, won: 50, lost: 14, points: 114, goalDiffOrNRR: '+9.8 PPG', form: ['W', 'W', 'W', 'W', 'L'] },
-  { position: 2, teamId: 'team_okc', teamName: 'Oklahoma City Thunder', teamLogo: 'https://images.unsplash.com/photo-1574629810360-7efbbe195018?w=100&auto=format&fit=crop&q=80', sport: 'basketball', tournamentId: 'tour_nba', played: 64, won: 47, lost: 17, points: 111, goalDiffOrNRR: '+7.4 PPG', form: ['W', 'W', 'L', 'W', 'W'] },
-  { position: 3, teamId: 'team_den', teamName: 'Denver Nuggets', teamLogo: 'https://images.unsplash.com/photo-1546519638-68e109498ffc?w=100&auto=format&fit=crop&q=80', sport: 'basketball', tournamentId: 'tour_nba', played: 64, won: 45, lost: 19, points: 109, goalDiffOrNRR: '+5.6 PPG', form: ['W', 'L', 'W', 'W', 'D'] },
-  { position: 4, teamId: 'team_lal', teamName: 'Los Angeles Lakers', teamLogo: 'https://images.unsplash.com/photo-1574629810360-7efbbe195018?w=100&auto=format&fit=crop&q=80', sport: 'basketball', tournamentId: 'tour_nba', played: 64, won: 40, lost: 24, points: 104, goalDiffOrNRR: '+3.1 PPG', form: ['L', 'W', 'W', 'L', 'W'] },
-
-  // F1 Drivers Championship
-  { position: 1, teamId: 'driver_max', teamName: 'Max Verstappen (Red Bull)', teamLogo: 'https://images.unsplash.com/photo-1568605117036-5fe5e7bab0b7?w=100&auto=format&fit=crop&q=80', sport: 'formula1', tournamentId: 'tour_f1', played: 6, won: 4, lost: 2, points: 136, goalDiffOrNRR: 'P1 (4 Wins)', form: ['W', 'W', 'L', 'W', 'W'] },
-  { position: 2, teamId: 'driver_charles', teamName: 'Charles Leclerc (Ferrari)', teamLogo: 'https://images.unsplash.com/photo-1568605117036-5fe5e7bab0b7?w=100&auto=format&fit=crop&q=80', sport: 'formula1', tournamentId: 'tour_f1', played: 6, won: 1, lost: 5, points: 112, goalDiffOrNRR: 'P2 (1 Win)', form: ['W', 'D', 'W', 'L', 'W'] },
-  { position: 3, teamId: 'driver_lando', teamName: 'Lando Norris (McLaren)', teamLogo: 'https://images.unsplash.com/photo-1568605117036-5fe5e7bab0b7?w=100&auto=format&fit=crop&q=80', sport: 'formula1', tournamentId: 'tour_f1', played: 6, won: 1, lost: 5, points: 101, goalDiffOrNRR: 'P3 (1 Win)', form: ['L', 'W', 'W', 'W', 'L'] },
-];
-
-const seedStatLeaders: StatLeader[] = [
-  // Football Top Scorers
-  { rank: 1, playerId: 'player_haaland', playerName: 'Erling Haaland', playerPhoto: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80', teamName: 'Manchester City', teamLogo: 'https://images.unsplash.com/photo-1522778119026-d647f0596c20?w=100&auto=format&fit=crop&q=80', sport: 'football', category: 'Top Goal Scorers', value: '25 Goals', matchesPlayed: 24 },
-  { rank: 2, playerId: 'player_salah', playerName: 'Mohamed Salah', playerPhoto: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=120&auto=format&fit=crop&q=80', teamName: 'Liverpool', teamLogo: 'https://images.unsplash.com/photo-1579952363873-27f3bade9f55?w=100&auto=format&fit=crop&q=80', sport: 'football', category: 'Top Goal Scorers', value: '21 Goals', matchesPlayed: 26 },
-  { rank: 3, playerId: 'player_mbappe', playerName: 'Kylian Mbappé', playerPhoto: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=120&auto=format&fit=crop&q=80', teamName: 'Real Madrid', teamLogo: 'https://images.unsplash.com/photo-1508098682722-e99c43a406b2?w=100&auto=format&fit=crop&q=80', sport: 'football', category: 'Top Goal Scorers', value: '19 Goals', matchesPlayed: 22 },
-  { rank: 4, playerId: 'player_saka', playerName: 'Bukayo Saka', playerPhoto: 'https://images.unsplash.com/photo-1522075469751-3a6694fb2f61?w=120&auto=format&fit=crop&q=80', teamName: 'Arsenal', teamLogo: 'https://images.unsplash.com/photo-1489944440615-453fc2b6a9a9?w=100&auto=format&fit=crop&q=80', sport: 'football', category: 'Top Goal Scorers', value: '16 Goals', matchesPlayed: 25 },
-
-  // Cricket Top Runs
-  { rank: 1, playerId: 'player_kohli', playerName: 'Virat Kohli', playerPhoto: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=120&auto=format&fit=crop&q=80', teamName: 'India / RCB', teamLogo: 'https://images.unsplash.com/photo-1531415074868-836332ff4296?w=100&auto=format&fit=crop&q=80', sport: 'cricket', category: 'Top Run Scorers', value: '642 Runs', matchesPlayed: 11 },
-  { rank: 2, playerId: 'player_gaikwad', playerName: 'Ruturaj Gaikwad', playerPhoto: 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=120&auto=format&fit=crop&q=80', teamName: 'Chennai Super Kings', teamLogo: 'https://images.unsplash.com/photo-1531415074868-836332ff4296?w=100&auto=format&fit=crop&q=80', sport: 'cricket', category: 'Top Run Scorers', value: '583 Runs', matchesPlayed: 10 },
-  { rank: 3, playerId: 'player_rohit', playerName: 'Rohit Sharma', playerPhoto: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=120&auto=format&fit=crop&q=80', teamName: 'India / MI', teamLogo: 'https://images.unsplash.com/photo-1540747913346-19e32dc3e97e?w=100&auto=format&fit=crop&q=80', sport: 'cricket', category: 'Top Run Scorers', value: '512 Runs', matchesPlayed: 10 },
-
-  // Cricket Top Wickets
-  { rank: 1, playerId: 'player_bumrah', playerName: 'Jasprit Bumrah', playerPhoto: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=120&auto=format&fit=crop&q=80', teamName: 'Mumbai Indians / India', teamLogo: 'https://images.unsplash.com/photo-1540747913346-19e32dc3e97e?w=100&auto=format&fit=crop&q=80', sport: 'cricket', category: 'Most Wickets', value: '23 Wickets', matchesPlayed: 10 },
-  { rank: 2, playerId: 'player_cummins', playerName: 'Pat Cummins', playerPhoto: 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=120&auto=format&fit=crop&q=80', teamName: 'Australia / SRH', teamLogo: 'https://images.unsplash.com/photo-1540747913346-19e32dc3e97e?w=100&auto=format&fit=crop&q=80', sport: 'cricket', category: 'Most Wickets', value: '19 Wickets', matchesPlayed: 9 },
-
-  // Basketball PPG
-  { rank: 1, playerId: 'player_luka', playerName: 'Luka Dončić', playerPhoto: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80', teamName: 'Dallas Mavericks', teamLogo: 'https://images.unsplash.com/photo-1546519638-68e109498ffc?w=100&auto=format&fit=crop&q=80', sport: 'basketball', category: 'Points Per Game (PPG)', value: '33.9 PPG', matchesPlayed: 62 },
-  { rank: 2, playerId: 'player_giannis', playerName: 'Giannis Antetokounmpo', playerPhoto: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=120&auto=format&fit=crop&q=80', teamName: 'Milwaukee Bucks', teamLogo: 'https://images.unsplash.com/photo-1574629810360-7efbbe195018?w=100&auto=format&fit=crop&q=80', sport: 'basketball', category: 'Points Per Game (PPG)', value: '30.4 PPG', matchesPlayed: 60 },
-  { rank: 3, playerId: 'player_tatum', playerName: 'Jayson Tatum', playerPhoto: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=120&auto=format&fit=crop&q=80', teamName: 'Boston Celtics', teamLogo: 'https://images.unsplash.com/photo-1546519638-68e109498ffc?w=100&auto=format&fit=crop&q=80', sport: 'basketball', category: 'Points Per Game (PPG)', value: '27.8 PPG', matchesPlayed: 64 },
-
-  // Tennis Aces
-  { rank: 1, playerId: 'player_hurkacz', playerName: 'Hubert Hurkacz', playerPhoto: 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=120&auto=format&fit=crop&q=80', teamName: 'Poland', teamLogo: 'https://images.unsplash.com/photo-1595435934249-5df7ed86e1c0?w=100&auto=format&fit=crop&q=80', sport: 'tennis', category: 'Aces Served', value: '782 Aces', matchesPlayed: 44 },
-  { rank: 2, playerId: 'player_sinner', playerName: 'Jannik Sinner', playerPhoto: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=120&auto=format&fit=crop&q=80', teamName: 'Italy', teamLogo: 'https://images.unsplash.com/photo-1595435934249-5df7ed86e1c0?w=100&auto=format&fit=crop&q=80', sport: 'tennis', category: 'Aces Served', value: '540 Aces', matchesPlayed: 48 },
-];
-
-const seedPlayers: Player[] = [
+let memoryChats: ChatMessage[] = [
   {
-    id: 'player_kohli',
-    name: 'Virat Kohli',
-    sport: 'cricket',
-    teamId: 'team_rcb',
-    teamName: 'Royal Challengers Bengaluru / India',
-    teamLogo: 'https://images.unsplash.com/photo-1531415074868-836332ff4296?w=100&auto=format&fit=crop&q=80',
-    jerseyNumber: 18,
-    position: 'Top-order Batsman',
-    nationality: 'India',
-    age: 37,
-    photo: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=120&auto=format&fit=crop&q=80',
-    stats: {
-      'IPL Runs': 8004,
-      'Test Runs': 8848,
-      'ODI Runs': 13848,
-      'Centuries': 80,
-      'Strike Rate': 137.9,
-    },
-    bio: 'One of the greatest all-format batsmen in cricket history. Former Indian captain and the all-time leading run-scorer in IPL history.',
-  },
-  {
-    id: 'player_bumrah',
-    name: 'Jasprit Bumrah',
-    sport: 'cricket',
-    teamId: 'team_mi',
-    teamName: 'Mumbai Indians / India',
-    teamLogo: 'https://images.unsplash.com/photo-1540747913346-19e32dc3e97e?w=100&auto=format&fit=crop&q=80',
-    jerseyNumber: 93,
-    position: 'Fast Bowler',
-    nationality: 'India',
-    age: 32,
-    photo: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=120&auto=format&fit=crop&q=80',
-    stats: {
-      'IPL Wickets': 168,
-      'Test Wickets': 162,
-      'Economy Rate': 7.3,
-      'Best Bowling': '6/19',
-    },
-    bio: 'Premier fast bowler known for his lethal yorkers, unorthodox action, and mastery in death overs across all international formats.',
-  },
-  {
-    id: 'player_haaland',
-    name: 'Erling Haaland',
-    sport: 'football',
-    teamId: 'team_mci',
-    teamName: 'Manchester City',
-    teamLogo: 'https://images.unsplash.com/photo-1522778119026-d647f0596c20?w=100&auto=format&fit=crop&q=80',
-    jerseyNumber: 9,
-    position: 'Striker / Centre-Forward',
-    nationality: 'Norway',
-    age: 25,
-    photo: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80',
-    stats: {
-      'Premier League Goals': 82,
-      'Champions League Goals': 44,
-      'Hat-tricks': 8,
-      'Shot Conversion': '29%',
-    },
-    bio: 'Prolific generational goalscorer endowed with rare pace, power, physical presence, and instinctual finishing inside the penalty area.',
-  },
-  {
-    id: 'player_mbappe',
-    name: 'Kylian Mbappé',
-    sport: 'football',
-    teamId: 'team_rma',
-    teamName: 'Real Madrid',
-    teamLogo: 'https://images.unsplash.com/photo-1508098682722-e99c43a406b2?w=100&auto=format&fit=crop&q=80',
-    jerseyNumber: 9,
-    position: 'Forward',
-    nationality: 'France',
-    age: 27,
-    photo: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=120&auto=format&fit=crop&q=80',
-    stats: {
-      'Total Career Goals': 310,
-      'World Cup Goals': 12,
-      'Assists': 130,
-      'Top Speed': '38.0 km/h',
-    },
-    bio: 'French superstar, 2018 World Cup winner and World Cup Final hat-trick hero, renowned for electrifying acceleration, dribbling, and clinical finishes.',
-  },
-  {
-    id: 'player_bellingham',
-    name: 'Jude Bellingham',
-    sport: 'football',
-    teamId: 'team_rma',
-    teamName: 'Real Madrid',
-    teamLogo: 'https://images.unsplash.com/photo-1508098682722-e99c43a406b2?w=100&auto=format&fit=crop&q=80',
-    jerseyNumber: 5,
-    position: 'Attacking Midfielder',
-    nationality: 'England',
-    age: 22,
-    photo: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=120&auto=format&fit=crop&q=80',
-    stats: {
-      'Goals for Real Madrid': 28,
-      'Assists': 16,
-      'Tackles Won': 112,
-      'Pass Accuracy': '89.4%',
-    },
-    bio: 'Dynamic complete midfielder who combines relentless physical box-to-box presence with creative elegance and clutch late match-winners.',
-  },
-  {
-    id: 'player_tatum',
-    name: 'Jayson Tatum',
-    sport: 'basketball',
-    teamId: 'team_bos',
-    teamName: 'Boston Celtics',
-    teamLogo: 'https://images.unsplash.com/photo-1546519638-68e109498ffc?w=100&auto=format&fit=crop&q=80',
-    jerseyNumber: 0,
-    position: 'Forward',
-    nationality: 'USA',
-    age: 28,
-    photo: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=120&auto=format&fit=crop&q=80',
-    stats: {
-      'PPG': 27.8,
-      'RPG': 8.6,
-      'APG': 4.9,
-      '3-Point %': '37.6%',
-      'NBA Championship': '1 (2024)',
-    },
-    bio: 'NBA Champion and 5-time All-Star swingman possessing elite three-level scoring, lock-down defensive versatility, and leadership.',
-  },
-  {
-    id: 'player_alcaraz',
-    name: 'Carlos Alcaraz',
-    sport: 'tennis',
-    teamId: 'team_tennis_spain',
-    teamName: 'ATP Tour (Spain)',
-    teamLogo: 'https://images.unsplash.com/photo-1595435934249-5df7ed86e1c0?w=100&auto=format&fit=crop&q=80',
-    jerseyNumber: 1,
-    position: 'Singles Player',
-    nationality: 'Spain',
-    age: 23,
-    photo: 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=120&auto=format&fit=crop&q=80',
-    stats: {
-      'Grand Slam Titles': 4,
-      'Career Titles': 16,
-      'Win Rate': '81.4%',
-      'Current Ranking': '#2',
-    },
-    bio: 'Phenom who became the youngest World No. 1 in ATP history. Possesses explosive movement, devastating drop shots, and all-court wizardry.',
-  },
-  {
-    id: 'driver_max',
-    name: 'Max Verstappen',
-    sport: 'formula1',
-    teamId: 'team_redbull',
-    teamName: 'Red Bull Racing',
-    teamLogo: 'https://images.unsplash.com/photo-1568605117036-5fe5e7bab0b7?w=100&auto=format&fit=crop&q=80',
-    jerseyNumber: 1,
-    position: 'Driver',
-    nationality: 'Netherlands',
-    age: 28,
-    photo: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80',
-    stats: {
-      'World Championships': 4,
-      'Race Wins': 64,
-      'Podiums': 112,
-      'Pole Positions': 42,
-    },
-    bio: 'Four-time Formula 1 World Champion famed for aggressive wheel-to-wheel racing, uncompromising precision, and record-shattering dominance.',
-  },
-];
-
-const seedTeams: Team[] = [
-  {
-    id: 'team_rma',
-    name: 'Real Madrid Club de Fútbol',
-    shortName: 'Real Madrid',
-    sport: 'football',
-    logo: 'https://images.unsplash.com/photo-1508098682722-e99c43a406b2?w=100&auto=format&fit=crop&q=80',
-    country: 'Spain',
-    founded: 1902,
-    stadium: 'Santiago Bernabéu (85,000 capacity)',
-    coach: 'Carlo Ancelotti',
-    trophies: 102,
-    squad: seedPlayers.filter((p) => p.teamId === 'team_rma'),
-  },
-  {
-    id: 'team_mci',
-    name: 'Manchester City Football Club',
-    shortName: 'Man City',
-    sport: 'football',
-    logo: 'https://images.unsplash.com/photo-1522778119026-d647f0596c20?w=100&auto=format&fit=crop&q=80',
-    country: 'England',
-    founded: 1880,
-    stadium: 'Etihad Stadium (53,400 capacity)',
-    coach: 'Pep Guardiola',
-    trophies: 34,
-    squad: seedPlayers.filter((p) => p.teamId === 'team_mci'),
-  },
-  {
-    id: 'team_csk',
-    name: 'Chennai Super Kings',
-    shortName: 'CSK',
-    sport: 'cricket',
-    logo: 'https://images.unsplash.com/photo-1531415074868-836332ff4296?w=100&auto=format&fit=crop&q=80',
-    country: 'India',
-    founded: 2008,
-    stadium: 'M. A. Chidambaram Stadium (38,000 capacity)',
-    coach: 'Stephen Fleming',
-    trophies: 5,
-    squad: seedPlayers.filter((p) => p.teamId === 'team_csk'),
-  },
-  {
-    id: 'team_mi',
-    name: 'Mumbai Indians',
-    shortName: 'MI',
-    sport: 'cricket',
-    logo: 'https://images.unsplash.com/photo-1540747913346-19e32dc3e97e?w=100&auto=format&fit=crop&q=80',
-    country: 'India',
-    founded: 2008,
-    stadium: 'Wankhede Stadium (33,108 capacity)',
-    coach: 'Mahela Jayawardene',
-    trophies: 5,
-    squad: seedPlayers.filter((p) => p.teamId === 'team_mi'),
-  },
-  {
-    id: 'team_bos',
-    name: 'Boston Celtics',
-    shortName: 'Celtics',
-    sport: 'basketball',
-    logo: 'https://images.unsplash.com/photo-1546519638-68e109498ffc?w=100&auto=format&fit=crop&q=80',
-    country: 'USA',
-    founded: 1946,
-    stadium: 'TD Garden (19,156 capacity)',
-    coach: 'Joe Mazzulla',
-    trophies: 18,
-    squad: seedPlayers.filter((p) => p.teamId === 'team_bos'),
-  },
-];
-
-const seedNewsUpdates: SportsNewsUpdate[] = [
-  {
-    id: 'news_1',
-    sport: 'football',
-    title: 'Champions League Drama: Real Madrid and Man City Clash in Epic 5-Goal Thriller',
-    summary: 'Vinícius Jr and Jude Bellingham produce second-half magic at the Bernabéu as Real Madrid take control in the quarter-final tie.',
-    content: 'An electric evening in Madrid saw both European powerhouses deliver football of the highest calibre. Erling Haaland equalized shortly after the break before Vinícius Jr ignited the home crowd with a breathtaking solo effort.',
-    category: 'Breaking',
-    timestamp: '25 mins ago',
-    imageUrl: 'https://images.unsplash.com/photo-1508098682722-e99c43a406b2?w=600&auto=format&fit=crop&q=80',
-    readTime: '3 min read',
-    relatedMatchId: 'match_football_1',
-  },
-  {
-    id: 'news_2',
-    sport: 'cricket',
-    title: 'Bumrah Strikes Late but CSK Inch Towards Dramatic Chepauk Victory Over MI',
-    summary: 'Ruturaj Gaikwad masterclass and Ravindra Jadeja finishing prowess put Chennai within touching distance in classic El Clásico of IPL.',
-    content: 'The M. A. Chidambaram Stadium was bathed in a sea of yellow as CSK mounted a clinical run-chase against arch-rivals Mumbai Indians. Despite Jasprit Bumrah conceding just 18 runs across his 4 overs, CSK maintained their calm in the penultimate over.',
-    category: 'Analysis',
-    timestamp: '45 mins ago',
-    imageUrl: 'https://images.unsplash.com/photo-1531415074868-836332ff4296?w=600&auto=format&fit=crop&q=80',
-    readTime: '4 min read',
-    relatedMatchId: 'match_cricket_1',
-  },
-  {
-    id: 'news_3',
-    sport: 'basketball',
-    title: 'Jayson Tatum Clutch Stepback Puts Celtics Ahead of Lakers in Fourth Quarter',
-    summary: 'TD Garden erupts as Boston defends their Eastern Conference supremacy in a wire-to-wire classic rivalry duel.',
-    content: 'With under three minutes on the clock, Jayson Tatum sank his fourth three-pointer of the night over Anthony Davis, giving Boston a critical cushion in a back-and-forth thriller against LeBron James and the Los Angeles Lakers.',
-    category: 'Breaking',
-    timestamp: '1 hour ago',
-    imageUrl: 'https://images.unsplash.com/photo-1546519638-68e109498ffc?w=600&auto=format&fit=crop&q=80',
-    readTime: '2 min read',
-    relatedMatchId: 'match_basketball_1',
-  },
-  {
-    id: 'news_4',
-    sport: 'tennis',
-    title: 'Alcaraz vs Sinner Wimbledon Semi-Final Enters Riveting Fourth Set',
-    summary: 'Centre Court witnesses high-speed baseline exchanges as defending champion Alcaraz battles the Italian world number one.',
-    content: 'Spectators on Centre Court stood to applaud a 28-shot rally that featured two lobs, a tweener attempt, and a curling forehand pass from Carlos Alcaraz to gain the upper hand in the fourth set.',
-    category: 'Breaking',
-    timestamp: '2 hours ago',
-    imageUrl: 'https://images.unsplash.com/photo-1595435934249-5df7ed86e1c0?w=600&auto=format&fit=crop&q=80',
-    readTime: '3 min read',
-    relatedMatchId: 'match_tennis_1',
-  },
-  {
-    id: 'news_5',
-    sport: 'formula1',
-    title: 'Monaco GP Preview: Red Bull and Ferrari Set for Tightest Street Fight of Season',
-    summary: 'Track temperature and qualifying strategy will decide Sunday around the legendary Monte Carlo harbour.',
-    content: 'Max Verstappen clinched pole position by just 0.024 seconds ahead of Charles Leclerc. With overtaking notoriously difficult on the narrow streets of Monaco, Sunday pit stop execution will be the decisive factor.',
-    category: 'Preview',
-    timestamp: '4 hours ago',
-    imageUrl: 'https://images.unsplash.com/photo-1568605117036-5fe5e7bab0b7?w=600&auto=format&fit=crop&q=80',
-    readTime: '5 min read',
-    relatedMatchId: 'match_f1_up_1',
-  },
-];
-
-const seedHighlights: MatchHighlight[] = [
-  {
-    id: 'hl_1',
-    matchId: 'match_football_1',
-    sport: 'football',
-    title: 'Real Madrid vs Man City (2-1) | Vinícius Jr Stunner & Haaland Header | UCL Highlights',
-    tournament: 'UEFA Champions League',
-    duration: '08:42',
-    thumbnail: 'https://images.unsplash.com/photo-1508098682722-e99c43a406b2?w=600&auto=format&fit=crop&q=80',
-    views: '1.4M views',
-    date: 'Today',
-    keyMoments: [
-      "34' - Jude Bellingham chips goalkeeper for opening goal",
-      "56' - Erling Haaland thumps header from De Bruyne cross",
-      "71' - Vinícius Jr 50-yard sprint and curled finish into bottom corner",
-      "89' - Ederson finger-tip save denies Valverde rocket",
-    ],
-  },
-  {
-    id: 'hl_2',
-    matchId: 'match_cricket_1',
-    sport: 'cricket',
-    title: 'CSK vs MI Thriller | Gaikwad 68 & Bumrah 2-Wicket Spell | Match Highlights',
-    tournament: 'Indian Premier League (IPL)',
-    duration: '11:15',
-    thumbnail: 'https://images.unsplash.com/photo-1531415074868-836332ff4296?w=600&auto=format&fit=crop&q=80',
-    views: '2.8M views',
-    date: 'Today',
-    keyMoments: [
-      '1st Innings: Rohit Sharma blazing 45 off 24 balls',
-      '14th Over: Bumrah strikes twice in one over with unplayable yorkers',
-      '18th Over: Shivam Dube launches 104m six over mid-wicket',
-      'Final Over: Jadeja boundary to seal tension-filled run chase',
-    ],
-  },
-  {
-    id: 'hl_3',
-    matchId: 'match_basketball_1',
-    sport: 'basketball',
-    title: 'Celtics vs Lakers Classic | Tatum 32 Pts vs LeBron 29 Pts | Full Game Highlights',
-    tournament: 'NBA Championship',
-    duration: '09:30',
-    thumbnail: 'https://images.unsplash.com/photo-1546519638-68e109498ffc?w=600&auto=format&fit=crop&q=80',
-    views: '890K views',
-    date: 'Today',
-    keyMoments: [
-      'Q2: LeBron James coast-to-coast dunk over two defenders',
-      'Q3: Jaylen Brown 8-0 solo scoring run',
-      'Q4: Tatum clutch stepback 3-pointer with 2:18 remaining',
-      'Final Seconds: Celtics defensive trap forces turnover',
-    ],
-  },
-  {
-    id: 'hl_4',
-    matchId: 'match_football_comp_1',
-    sport: 'football',
-    title: 'Manchester City 3 - 1 Chelsea | De Bruyne Masterclass & Foden Strike',
-    tournament: 'English Premier League',
-    duration: '07:20',
-    thumbnail: 'https://images.unsplash.com/photo-1522778119026-d647f0596c20?w=600&auto=format&fit=crop&q=80',
-    views: '1.1M views',
-    date: 'Yesterday',
-    keyMoments: [
-      "12' - Kevin De Bruyne free kick into top postage stamp",
-      "41' - Cole Palmer penalty calmly slotted",
-      "62' - Erling Haaland towering header",
-      "88' - Phil Foden curled effort completes three points",
-    ],
-  },
-];
-
-let currentUserProfile: UserProfile = {
-  id: 'user_sports_fan',
-  name: 'Alex Morgan',
-  email: 'sportsfan@example.com',
-  avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80',
-  favoriteSports: ['football', 'cricket', 'basketball'],
-  followedTeamIds: ['team_rma', 'team_csk', 'team_bos'],
-  bookmarkedMatchIds: ['match_cricket_1', 'match_football_1'],
-  bookmarkedHighlightIds: ['hl_1', 'hl_2'],
-  notificationsEnabled: true,
-  scoreAlerts: true,
-};
-
-// -------------------------------------------------------------
-// MONGODB STORAGE & IN-MEMORY MONGO-COMPATIBLE FALLBACK ENGINE
-// -------------------------------------------------------------
-class MongoCollectionWrapper<T extends Record<string, any>> {
-  name: string;
-  items: T[];
-
-  constructor(name: string, initialItems: T[]) {
-    this.name = name;
-    this.items = [...initialItems];
-  }
-
-  async find(query?: Partial<Record<string, any>>): Promise<T[]> {
-    if (!query || Object.keys(query).length === 0) return [...this.items];
-    return this.items.filter((item) => {
-      for (const key of Object.keys(query)) {
-        if ((item as any)[key] !== query[key]) {
-          return false;
-        }
-      }
-      return true;
-    });
-  }
-
-  async findOne(query: Partial<Record<string, any>>): Promise<T | null> {
-    const list = await this.find(query);
-    return list[0] || null;
-  }
-
-  async insertOne(doc: T): Promise<T> {
-    this.items.push(doc);
-    return doc;
-  }
-
-  async updateOne(query: Partial<Record<string, any>>, update: Partial<T>): Promise<boolean> {
-    const index = this.items.findIndex((item) => {
-      for (const key of Object.keys(query)) {
-        if ((item as any)[key] !== query[key]) return false;
-      }
-      return true;
-    });
-    if (index !== -1) {
-      this.items[index] = { ...this.items[index], ...update };
-      return true;
-    }
-    return false;
-  }
-
-  async deleteOne(query: Partial<Record<string, any>>): Promise<boolean> {
-    const index = this.items.findIndex((item) => {
-      for (const key of Object.keys(query)) {
-        if ((item as any)[key] !== query[key]) return false;
-      }
-      return true;
-    });
-    if (index !== -1) {
-      this.items.splice(index, 1);
-      return true;
-    }
-    return false;
-  }
-
-  async countDocuments(): Promise<number> {
-    return this.items.length;
-  }
-}
-
-// In-Memory Database Collections with MongoDB query semantics
-const memoryDb = {
-  tournaments: new MongoCollectionWrapper<Tournament>('tournaments', seedTournaments),
-  matches: new MongoCollectionWrapper<Match>('matches', seedMatches),
-  standings: new MongoCollectionWrapper<StandingRow>('standings', seedStandings),
-  statistics: new MongoCollectionWrapper<StatLeader>('statistics', seedStatLeaders),
-  players: new MongoCollectionWrapper<Player>('players', seedPlayers),
-  teams: new MongoCollectionWrapper<Team>('teams', seedTeams),
-  updates: new MongoCollectionWrapper<SportsNewsUpdate>('updates', seedNewsUpdates),
-  highlights: new MongoCollectionWrapper<MatchHighlight>('highlights', seedHighlights),
-};
-
-let realDb: Db | null = null;
-
-async function initMongo() {
-  const mongoUri = process.env.MONGODB_URI;
-  if (mongoUri) {
-    try {
-      const client = new MongoClient(mongoUri, { serverSelectionTimeoutMS: 2000 });
-      await client.connect();
-      realDb = client.db();
-      console.log('Successfully connected to MongoDB server');
-
-      // Check if data seeded, if not seed it
-      const count = await realDb.collection('matches').countDocuments();
-      if (count === 0) {
-        await realDb.collection('tournaments').insertMany(seedTournaments as any);
-        await realDb.collection('matches').insertMany(seedMatches as any);
-        await realDb.collection('standings').insertMany(seedStandings as any);
-        await realDb.collection('statistics').insertMany(seedStatLeaders as any);
-        await realDb.collection('players').insertMany(seedPlayers as any);
-        await realDb.collection('teams').insertMany(seedTeams as any);
-        await realDb.collection('updates').insertMany(seedNewsUpdates as any);
-        await realDb.collection('highlights').insertMany(seedHighlights as any);
-        console.log('MongoDB initialized with complete sports seed collections');
-      }
-    } catch (err: any) {
-      console.warn('MongoDB connection note: Using high-performance embedded MongoDB engine:', err.message);
-    }
-  } else {
-    console.log('Embedded MongoDB engine active with complete sports data store.');
-  }
-}
-
-initMongo();
-
-// Helper to access collections
-async function getCollection<T extends Record<string, any>>(name: keyof typeof memoryDb) {
-  if (realDb) {
-    const col = realDb.collection(name);
-    return {
-      find: async (query?: any) => (await col.find(query || {}).toArray()) as unknown as T[],
-      findOne: async (query: any) => (await col.findOne(query)) as unknown as T | null,
-      insertOne: async (doc: T) => {
-        await col.insertOne(doc as any);
-        return doc;
-      },
-      updateOne: async (query: any, update: any) => {
-        await col.updateOne(query, { $set: update });
-        return true;
-      },
-      deleteOne: async (query: any) => {
-        await col.deleteOne(query);
-        return true;
-      },
-    };
-  }
-  return memoryDb[name] as unknown as MongoCollectionWrapper<T>;
-}
-
-// -------------------------------------------------------------
-// REST API ROUTES
-// -------------------------------------------------------------
-
-// Health check & MongoDB status
-app.get('/api/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    database: realDb ? 'MongoDB Connected' : 'Embedded MongoDB Engine Active',
-    aiFeatures: 'None (Pure Sports Logic)',
+    id: 'c-welcome',
+    role: 'assistant',
+    text: "Hello, I am MindEase, your supportive mental health companion. Whatever you're holding right now—whether you feel anxious, overwhelmed, lonely, or just need a safe space to vent—I'm here to listen without judgment. How are you feeling right now?",
     timestamp: new Date().toISOString(),
-  });
-});
+    suggestions: [
+      "I can't stop overthinking a conversation",
+      'I feel anxious and need help calming down',
+      'I am feeling burnt out and exhausted',
+      'Can you help me reframe a negative thought?',
+    ],
+  },
+];
 
-// Sport categories
-app.get('/api/sports', (req, res) => {
-  const sports: { id: SportType; name: string; icon: string; liveCount: number }[] = [
-    { id: 'all', name: 'All Sports', icon: 'Trophy', liveCount: 4 },
-    { id: 'football', name: 'Football', icon: 'CircleDot', liveCount: 2 },
-    { id: 'cricket', name: 'Cricket', icon: 'Flame', liveCount: 2 },
-    { id: 'basketball', name: 'Basketball', icon: 'Dribbble', liveCount: 1 },
-    { id: 'tennis', name: 'Tennis', icon: 'Activity', liveCount: 1 },
-    { id: 'formula1', name: 'Formula 1', icon: 'Gauge', liveCount: 0 },
-  ];
-  res.json(sports);
-});
+const curatedMoodChangers: MoodChangerItem[] = [
+  // Movies
+  {
+    id: 'mc-1',
+    category: 'movie',
+    title: 'My Neighbor Totoro',
+    creatorOrYear: 'Hayao Miyazaki (1988)',
+    description: 'A gentle, slow-paced anime masterpiece brimming with childlike wonder, peaceful countryside rain, and gentle forest spirits.',
+    whyItHelps: 'Has virtually no high-stakes conflict or villain, lowering cortisol and offering pure soothing escapism.',
+    moodTarget: 'High Anxiety & Racing Mind',
+    durationOrLength: '1h 26m',
+    tags: ['Comfort', 'Gentle', 'Nature', 'Anime'],
+  },
+  {
+    id: 'mc-2',
+    category: 'movie',
+    title: 'The Secret Life of Walter Mitty',
+    creatorOrYear: 'Ben Stiller (2013)',
+    description: 'A day-dreaming office worker embarks on an unexpected real-world journey across Iceland and Greenland.',
+    whyItHelps: 'Inspires courage to step out of mental loops and reconnect with the expansive beauty of the physical world.',
+    moodTarget: 'Feeling Stuck & Overwhelmed',
+    durationOrLength: '1h 54m',
+    tags: ['Uplifting', 'Adventure', 'Perspective'],
+  },
+  {
+    id: 'mc-3',
+    category: 'movie',
+    title: 'Paddington 2',
+    creatorOrYear: 'Paul King (2017)',
+    description: 'A charming, endlessly kind bear brings warmth, marmalade sandwiches, and sincere community spirit to everyone he meets.',
+    whyItHelps: 'Universal feel-good comfort that restores faith in human empathy and kindness.',
+    moodTarget: 'Low Mood & Loneliness',
+    durationOrLength: '1h 44m',
+    tags: ['Heartwarming', 'Comedy', 'Feel Good'],
+  },
+  {
+    id: 'mc-4',
+    category: 'movie',
+    title: 'Amélie',
+    creatorOrYear: 'Jean-Pierre Jeunet (2001)',
+    description: 'An imaginative young woman in Paris secretly orchestrates small acts of joy for the eccentric people around her.',
+    whyItHelps: 'Celebrates tiny sensory pleasures and finding magic in everyday quiet moments.',
+    moodTarget: 'Emotional Numbness or Apathy',
+    durationOrLength: '2h 02m',
+    tags: ['Whimsical', 'Visual', 'Uplifting'],
+  },
 
-// Live Scores Quick Ticker
-app.get('/api/live-scores', async (req, res) => {
-  const matchesCol = await getCollection<Match>('matches');
-  const allMatches = await matchesCol.find();
-  const liveMatches = allMatches.filter((m) => m.status === 'live');
-  res.json(liveMatches);
-});
+  // Books
+  {
+    id: 'mc-5',
+    category: 'book',
+    title: 'The Boy, the Mole, the Fox and the Horse',
+    creatorOrYear: 'Charlie Mackesy',
+    description: 'A poignant, illustrated conversation about kindness, courage, vulnerability, and what it means to ask for help.',
+    whyItHelps: 'Bite-sized, gorgeously illustrated wisdom that feels like a warm hug when words are too hard to process.',
+    moodTarget: 'Low Self-Esteem & Sadness',
+    durationOrLength: '128 pages',
+    tags: ['Illustrated', 'Self-Compassion', 'Gentle'],
+  },
+  {
+    id: 'mc-6',
+    category: 'book',
+    title: 'Reasons to Stay Alive',
+    creatorOrYear: 'Matt Haig',
+    description: 'A candid, deeply personal memoir on surviving severe anxiety and depression, filled with lists and reassuring insights.',
+    whyItHelps: 'Reminds you that severe dark feelings are temporary states and you are not alone in having them.',
+    moodTarget: 'Existential Dread & Depression',
+    durationOrLength: '272 pages',
+    tags: ['Mental Health', 'Hope', 'Relatable'],
+  },
+  {
+    id: 'mc-7',
+    category: 'book',
+    title: 'The Midnight Library',
+    creatorOrYear: 'Matt Haig',
+    description: 'Between life and death lies a library where every book offers a chance to experience the lives you could have lived.',
+    whyItHelps: 'Directly helps soothe persistent regret and "what-if" loops by showing that every path has value.',
+    moodTarget: 'Overthinking & Regret Loops',
+    durationOrLength: '304 pages',
+    tags: ['Fiction', 'Perspective', 'Philosophy'],
+  },
+  {
+    id: 'mc-8',
+    category: 'book',
+    title: 'Before the Coffee Gets Cold',
+    creatorOrYear: 'Toshikazu Kawaguchi',
+    description: 'In a small Tokyo back alley cafe, customers are given the rare chance to travel back in time for as long as their coffee remains warm.',
+    whyItHelps: 'Quiet, introspective pacing that encourages acceptance and peace with what cannot be changed.',
+    moodTarget: 'Racing Thoughts & Restlessness',
+    durationOrLength: '213 pages',
+    tags: ['Cozy', 'Japanese Fiction', 'Peaceful'],
+  },
 
-// Matches list with sport, status, search, and tournament filters
-app.get('/api/matches', async (req, res) => {
+  // Activities
+  {
+    id: 'mc-9',
+    category: 'activity',
+    title: 'Warm Water & Sensory Reset',
+    creatorOrYear: 'Somatic Grounding',
+    description: 'Wash your hands or face with warm water for 60 seconds, paying conscious attention to the temperature, softness of the towel, and your breath.',
+    whyItHelps: 'Activates the mammalian dive reflex and parasympathetic nervous system to rapidly slow down heart rate.',
+    moodTarget: 'Acute Panic or Severe Tension',
+    durationOrLength: '3-5 minutes',
+    tags: ['Sensory', 'Quick', 'Somatic'],
+  },
+  {
+    id: 'mc-10',
+    category: 'activity',
+    title: 'The "Brain Dump & Tear Up" Exercise',
+    creatorOrYear: 'Cognitive Defusion',
+    description: 'Grab a physical sheet of paper and write down every ugly, anxious, unfiltered thought for 5 minutes without editing. Then physically tear it up and throw it away.',
+    whyItHelps: 'Physically unburdens working memory and symbolizes that thoughts are mental events, not permanent reality.',
+    moodTarget: 'Obsessive Overthinking',
+    durationOrLength: '7 minutes',
+    tags: ['Release', 'Mindset', 'Action'],
+  },
+  {
+    id: 'mc-11',
+    category: 'activity',
+    title: 'Micro-Walk Without Phone',
+    creatorOrYear: 'Mindful Movement',
+    description: 'Step outside or walk around your living space with zero screens or podcasts. Look for 5 objects that are green, 3 that are textured, and 1 unique shadow.',
+    whyItHelps: 'Shifts focus from internal ruminative loops outward into sensory visual cues.',
+    moodTarget: 'Brain Fog & Restlessness',
+    durationOrLength: '10 minutes',
+    tags: ['Nature', 'Movement', 'Grounding'],
+  },
+  {
+    id: 'mc-12',
+    category: 'activity',
+    title: 'Humming or Low-Frequency Vocal Tone',
+    creatorOrYear: 'Vagus Nerve Reset',
+    description: 'Inhale deeply through your nose, then exhale slowly with a low "hmmm" or "voo" vibration in your chest for 6 continuous breath cycles.',
+    whyItHelps: 'Vibrates the vocal cords and directly stimulates the vagus nerve to signal physical safety to your brain.',
+    moodTarget: 'Chest Tightness & Nervous Agitation',
+    durationOrLength: '2 minutes',
+    tags: ['Breathing', 'Nervous System', 'Immediate'],
+  },
+];
+
+// -------------------------------------------------------------
+// MONGODB CONNECTION SETUP
+// -------------------------------------------------------------
+
+let mongoClient: MongoClient | null = null;
+let db: Db | null = null;
+let isMongoConnected = false;
+const MONGO_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/mindheal';
+
+async function initMongoDB() {
   try {
-    const { sport, status, tournamentId, q } = req.query;
-    const matchesCol = await getCollection<Match>('matches');
-    let matches = await matchesCol.find();
+    mongoClient = new MongoClient(MONGO_URI, {
+      serverSelectionTimeoutMS: 2000,
+      connectTimeoutMS: 2000,
+    });
+    await mongoClient.connect();
+    db = mongoClient.db();
+    isMongoConnected = true;
+    console.log(`[MongoDB] Connected successfully to database: ${db.databaseName}`);
 
-    if (sport && sport !== 'all') {
-      matches = matches.filter((m) => m.sport === sport);
-    }
-    if (status) {
-      matches = matches.filter((m) => m.status === status);
-    }
-    if (tournamentId) {
-      matches = matches.filter((m) => m.tournamentId === tournamentId);
-    }
-    if (q) {
-      const term = (q as string).toLowerCase();
-      matches = matches.filter(
-        (m) =>
-          m.homeTeam.name.toLowerCase().includes(term) ||
-          m.awayTeam.name.toLowerCase().includes(term) ||
-          m.tournamentName.toLowerCase().includes(term) ||
-          m.venue.toLowerCase().includes(term)
-      );
+    // Pre-populate database with seed data if collections are empty
+    const moodsCol = db.collection<MoodLog>('moods');
+    const moodCount = await moodsCol.countDocuments();
+    if (moodCount === 0) {
+      await moodsCol.insertMany(memoryMoods);
+      console.log('[MongoDB] Seeded initial mood logs.');
     }
 
-    res.json(matches);
+    const practicesCol = db.collection<PracticeEntry>('practices');
+    const practicesCount = await practicesCol.countDocuments();
+    if (practicesCount === 0) {
+      await practicesCol.insertMany(memoryPractices);
+      console.log('[MongoDB] Seeded initial practices.');
+    }
+  } catch (err: any) {
+    isMongoConnected = false;
+    console.warn(`[MongoDB] Could not connect to MongoDB (${err?.message || err}). Falling back to robust in-memory persistent storage. App will work 100% seamlessly.`);
+  }
+}
+
+// -------------------------------------------------------------
+// GEMINI AI SETUP
+// -------------------------------------------------------------
+
+let aiClient: GoogleGenAI | null = null;
+
+function getAiClient(): GoogleGenAI | null {
+  if (aiClient) return aiClient;
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) {
+    console.warn('[Gemini AI] GEMINI_API_KEY is not set. Intelligent built-in cognitive responses will be used.');
+    return null;
+  }
+  try {
+    aiClient = new GoogleGenAI({
+      apiKey: key,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        },
+      },
+    });
+    return aiClient;
+  } catch (err) {
+    console.error('[Gemini AI] Initialization error:', err);
+    return null;
+  }
+}
+
+// -------------------------------------------------------------
+// HELPER: CRISIS KEYWORD DETECTION (SAFETY FIRST)
+// -------------------------------------------------------------
+
+function checkCrisisKeywords(text: string): boolean {
+  const crisisRegex = /(kill myself|suicide|end my life|want to die|harm myself|cutting myself|hang myself|don't want to live anymore|dont want to live anymore|better off dead|no reason to live)/i;
+  return crisisRegex.test(text);
+}
+
+const crisisEmergencyText = `⚠️ I hear how deeply exhausted and in pain you are right now, and I want you to know that your life has immense worth. You do not have to carry this crushing weight all by yourself. 
+
+Please reach out immediately to trained compassionate professionals who are ready 24/7 to listen confidentially:
+
+• In the US & Canada: Call or text **988** (Suicide & Crisis Lifeline - free, 24/7)
+• In the UK: Call **111** (NHS Mental Health) or text SHOUT to **85258**
+• In India: Call **14416** (Tele-MANAS) or **044-24640050** (Sneha India)
+• International: Visit **https://findahelpline.com** or call your local emergency services (911 / 999 / 112).
+
+Please stay safe and let someone support you today. I am here to be a calm space, but a real human lifeline can give you the real-time care you deserve.`;
+
+// -------------------------------------------------------------
+// API ROUTES
+// -------------------------------------------------------------
+
+// 1. Health & Server Status
+app.get('/api/status', async (_req, res) => {
+  let totalMoodLogs = memoryMoods.length;
+  let totalPractices = memoryPractices.length;
+
+  if (isMongoConnected && db) {
+    try {
+      totalMoodLogs = await db.collection('moods').countDocuments();
+      totalPractices = await db.collection('practices').countDocuments();
+    } catch {
+      // ignore
+    }
+  }
+
+  const status: AppServerStatus = {
+    mongodbConnected: isMongoConnected,
+    databaseName: isMongoConnected && db ? db.databaseName : 'Local Safe Storage',
+    aiReady: Boolean(process.env.GEMINI_API_KEY),
+    totalMoodLogs,
+    totalPractices,
+  };
+  res.json(status);
+});
+
+// 2. Mood Tracking (CRUD)
+app.get('/api/moods', async (_req, res) => {
+  try {
+    if (isMongoConnected && db) {
+      const logs = await db.collection<MoodLog>('moods').find().sort({ timestamp: -1 }).toArray();
+      return res.json(logs);
+    }
+    return res.json([...memoryMoods].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()));
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Single Match details
-app.get('/api/matches/:id', async (req, res) => {
+app.post('/api/moods', async (req, res) => {
+  try {
+    const { mood, score, emotionTags, note } = req.body;
+    if (!mood) {
+      return res.status(400).json({ error: 'Mood is required' });
+    }
+
+    const newLog: MoodLog = {
+      id: `m-${Date.now()}`,
+      mood,
+      score: Number(score) || 3,
+      emotionTags: Array.isArray(emotionTags) ? emotionTags : [],
+      note: note || '',
+      timestamp: new Date().toISOString(),
+    };
+
+    if (isMongoConnected && db) {
+      await db.collection<MoodLog>('moods').insertOne({ ...newLog });
+    } else {
+      memoryMoods.unshift(newLog);
+    }
+
+    res.status(201).json(newLog);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 3. Daily Practices (Gratitude, Affirmations, Journaling)
+app.get('/api/practices', async (req, res) => {
+  try {
+    const typeFilter = req.query.type as PracticeType | undefined;
+    if (isMongoConnected && db) {
+      const query: any = typeFilter ? { type: typeFilter } : {};
+      const entries = await db.collection<PracticeEntry>('practices').find(query).sort({ timestamp: -1 }).toArray();
+      return res.json(entries);
+    }
+
+    let entries = [...memoryPractices];
+    if (typeFilter) {
+      entries = entries.filter((e) => e.type === typeFilter);
+    }
+    entries.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    res.json(entries);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/practices', async (req, res) => {
+  try {
+    const { type, title, content, promptUsed, moodAssociated } = req.body;
+    if (!type || !content) {
+      return res.status(400).json({ error: 'Type and content are required' });
+    }
+
+    const newPractice: PracticeEntry = {
+      id: `p-${Date.now()}`,
+      type,
+      title: title || `${type.charAt(0).toUpperCase() + type.slice(1)} Reflection`,
+      content,
+      promptUsed: promptUsed || undefined,
+      moodAssociated: moodAssociated || undefined,
+      timestamp: new Date().toISOString(),
+    };
+
+    if (isMongoConnected && db) {
+      await db.collection<PracticeEntry>('practices').insertOne({ ...newPractice });
+    } else {
+      memoryPractices.unshift(newPractice);
+    }
+
+    res.status(201).json(newPractice);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/practices/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const matchesCol = await getCollection<Match>('matches');
-    const match = await matchesCol.findOne({ id });
-    if (!match) {
-      return res.status(404).json({ error: 'Match not found' });
+    if (isMongoConnected && db) {
+      await db.collection('practices').deleteOne({ id });
+    } else {
+      memoryPractices = memoryPractices.filter((p) => p.id !== id);
     }
-    res.json(match);
+    res.json({ success: true, id });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Live Match Score Simulator (Simulates real-time live events for demonstration)
-app.post('/api/matches/:id/simulate-live', async (req, res) => {
+// 4. Chat Assistant
+app.get('/api/chat', async (_req, res) => {
   try {
-    const { id } = req.params;
-    const matchesCol = await getCollection<Match>('matches');
-    const match = await matchesCol.findOne({ id });
-
-    if (!match || match.status !== 'live') {
-      return res.status(400).json({ error: 'Active live match not found' });
+    if (isMongoConnected && db) {
+      const messages = await db.collection<ChatMessage>('chats').find().sort({ timestamp: 1 }).toArray();
+      return res.json(messages.length > 0 ? messages : memoryChats);
     }
-
-    // Dynamic increment based on sport
-    if (match.sport === 'cricket') {
-      const runs = [1, 2, 4, 6, 0][Math.floor(Math.random() * 5)];
-      const currentScore = String(match.score.homeScore);
-      const parts = currentScore.split('/');
-      const runsTotal = parseInt(parts[0] || '182', 10) + runs;
-      const wickets = parts[1] || '4';
-      match.score.homeScore = `${runsTotal}/${wickets}`;
-      match.score.periodOrOvers = '19.4 ov';
-      match.score.summaryNote = `CSK need ${Math.max(0, 186 - runsTotal)} runs to win`;
-      if (match.events) {
-        match.events.unshift({
-          time: '19.4',
-          type: runs >= 4 ? 'boundary' : 'comment',
-          player: 'Ravindra Jadeja',
-          description: `${runs === 4 ? 'FOUR!' : runs === 6 ? 'SIX!' : `${runs} runs.`} Jadeja moves the scoreboard rapidly.`,
-        });
-      }
-    } else if (match.sport === 'football') {
-      match.score.homeScore = Number(match.score.homeScore) + 1;
-      match.score.periodOrOvers = "78'";
-      if (match.events) {
-        match.events.unshift({
-          time: "78'",
-          type: 'goal',
-          player: 'Federico Valverde',
-          description: 'GOAL! Bullet strike from 25 yards out rattles the crossbar and bounces in!',
-        });
-      }
-    } else if (match.sport === 'basketball') {
-      match.score.homeScore = Number(match.score.homeScore) + 2;
-      match.score.periodOrOvers = 'Q4 01:12';
-      if (match.events) {
-        match.events.unshift({
-          time: '01:12',
-          type: 'basket',
-          player: 'Jaylen Brown',
-          description: 'Driving layup contested at the rim!',
-        });
-      }
-    }
-
-    await matchesCol.updateOne({ id }, match);
-    res.json({ success: true, match });
+    res.json(memoryChats);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Tournaments list
-app.get('/api/tournaments', async (req, res) => {
+app.delete('/api/chat', async (_req, res) => {
   try {
-    const { sport } = req.query;
-    const tourCol = await getCollection<Tournament>('tournaments');
-    let tournaments = await tourCol.find();
-    if (sport && sport !== 'all') {
-      tournaments = tournaments.filter((t) => t.sport === sport);
+    if (isMongoConnected && db) {
+      await db.collection('chats').deleteMany({});
     }
-    res.json(tournaments);
+    memoryChats = [
+      {
+        id: `c-${Date.now()}`,
+        role: 'assistant',
+        text: "I've refreshed our conversation. Take a deep breath. Whenever you're ready, feel free to share what's on your mind.",
+        timestamp: new Date().toISOString(),
+        suggestions: [
+          'Help me calm down right now',
+          'I need to talk through my overthinking',
+          'Give me a gentle affirmation',
+        ],
+      },
+    ];
+    res.json({ success: true, message: 'Chat reset' });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Tournament details
-app.get('/api/tournaments/:id', async (req, res) => {
+app.post('/api/chat', async (req, res) => {
   try {
-    const { id } = req.params;
-    const tourCol = await getCollection<Tournament>('tournaments');
-    const tournament = await tourCol.findOne({ id });
-    if (!tournament) {
-      return res.status(404).json({ error: 'Tournament not found' });
-    }
-    const matchesCol = await getCollection<Match>('matches');
-    const matches = await matchesCol.find({ tournamentId: id });
-    const standingsCol = await getCollection<StandingRow>('standings');
-    const standings = await standingsCol.find({ tournamentId: id });
-
-    res.json({ tournament, matches, standings });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Standings / Points Table
-app.get('/api/standings', async (req, res) => {
-  try {
-    const { sport, tournamentId } = req.query;
-    const standingsCol = await getCollection<StandingRow>('standings');
-    let rows = await standingsCol.find();
-
-    if (tournamentId) {
-      rows = rows.filter((r) => r.tournamentId === tournamentId);
-    } else if (sport && sport !== 'all') {
-      rows = rows.filter((r) => r.sport === sport);
+    const { message, currentMood } = req.body;
+    if (!message || typeof message !== 'string') {
+      return res.status(400).json({ error: 'Message is required' });
     }
 
-    // Sort by points descending, then position ascending
-    rows.sort((a, b) => (b.points !== a.points ? b.points - a.points : a.position - b.position));
+    const userMessage: ChatMessage = {
+      id: `c-user-${Date.now()}`,
+      role: 'user',
+      text: message.trim(),
+      timestamp: new Date().toISOString(),
+    };
 
-    res.json(rows);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Statistics Leaders
-app.get('/api/statistics', async (req, res) => {
-  try {
-    const { sport, category } = req.query;
-    const statsCol = await getCollection<StatLeader>('statistics');
-    let stats = await statsCol.find();
-
-    if (sport && sport !== 'all') {
-      stats = stats.filter((s) => s.sport === sport);
-    }
-    if (category) {
-      stats = stats.filter((s) => s.category.toLowerCase().includes((category as string).toLowerCase()));
+    // Save user message
+    if (isMongoConnected && db) {
+      await db.collection<ChatMessage>('chats').insertOne({ ...userMessage });
+    } else {
+      memoryChats.push(userMessage);
     }
 
-    res.json(stats);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
+    // Safety check first
+    if (checkCrisisKeywords(message)) {
+      const crisisReply: ChatMessage = {
+        id: `c-ai-${Date.now()}`,
+        role: 'assistant',
+        text: crisisEmergencyText,
+        timestamp: new Date().toISOString(),
+        isCrisisAlert: true,
+        suggestions: ['988 Lifeline Info', 'How to practice grounding right now', 'I want to talk safely'],
+      };
 
-// Teams list & single
-app.get('/api/teams', async (req, res) => {
-  try {
-    const { sport, search } = req.query;
-    const teamsCol = await getCollection<Team>('teams');
-    let teams = await teamsCol.find();
-
-    if (sport && sport !== 'all') {
-      teams = teams.filter((t) => t.sport === sport);
-    }
-    if (search) {
-      const q = (search as string).toLowerCase();
-      teams = teams.filter((t) => t.name.toLowerCase().includes(q) || t.country.toLowerCase().includes(q));
-    }
-
-    res.json(teams);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.get('/api/teams/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const teamsCol = await getCollection<Team>('teams');
-    const team = await teamsCol.findOne({ id });
-    if (!team) {
-      return res.status(404).json({ error: 'Team not found' });
-    }
-    const matchesCol = await getCollection<Match>('matches');
-    const teamMatches = (await matchesCol.find()).filter(
-      (m) => m.homeTeam.id === id || m.awayTeam.id === id
-    );
-    res.json({ ...team, recentMatches: teamMatches });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Players list & single
-app.get('/api/players', async (req, res) => {
-  try {
-    const { sport, teamId, search } = req.query;
-    const playersCol = await getCollection<Player>('players');
-    let players = await playersCol.find();
-
-    if (sport && sport !== 'all') {
-      players = players.filter((p) => p.sport === sport);
-    }
-    if (teamId) {
-      players = players.filter((p) => p.teamId === teamId);
-    }
-    if (search) {
-      const q = (search as string).toLowerCase();
-      players = players.filter(
-        (p) =>
-          p.name.toLowerCase().includes(q) ||
-          p.nationality.toLowerCase().includes(q) ||
-          p.position.toLowerCase().includes(q)
-      );
-    }
-
-    res.json(players);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.get('/api/players/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const playersCol = await getCollection<Player>('players');
-    const player = await playersCol.findOne({ id });
-    if (!player) {
-      return res.status(404).json({ error: 'Player not found' });
-    }
-    res.json(player);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// News Updates
-app.get('/api/updates', async (req, res) => {
-  try {
-    const { sport, category, search } = req.query;
-    const updatesCol = await getCollection<SportsNewsUpdate>('updates');
-    let updates = await updatesCol.find();
-
-    if (sport && sport !== 'all') {
-      updates = updates.filter((u) => u.sport === sport);
-    }
-    if (category) {
-      updates = updates.filter((u) => u.category.toLowerCase() === (category as string).toLowerCase());
-    }
-    if (search) {
-      const q = (search as string).toLowerCase();
-      updates = updates.filter(
-        (u) => u.title.toLowerCase().includes(q) || u.summary.toLowerCase().includes(q)
-      );
-    }
-
-    res.json(updates);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Match Highlights
-app.get('/api/highlights', async (req, res) => {
-  try {
-    const { sport, matchId } = req.query;
-    const hlCol = await getCollection<MatchHighlight>('highlights');
-    let highlights = await hlCol.find();
-
-    if (sport && sport !== 'all') {
-      highlights = highlights.filter((h) => h.sport === sport);
-    }
-    if (matchId) {
-      highlights = highlights.filter((h) => h.matchId === matchId);
-    }
-
-    res.json(highlights);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Global Search (player/match/updates/teams)
-app.get('/api/search', async (req, res) => {
-  try {
-    const q = ((req.query.q as string) || '').trim().toLowerCase();
-    if (!q) {
-      return res.json({ players: [], matches: [], teams: [], updates: [] });
-    }
-
-    const [playersCol, matchesCol, teamsCol, updatesCol] = await Promise.all([
-      getCollection<Player>('players'),
-      getCollection<Match>('matches'),
-      getCollection<Team>('teams'),
-      getCollection<SportsNewsUpdate>('updates'),
-    ]);
-
-    const [allPlayers, allMatches, allTeams, allUpdates] = await Promise.all([
-      playersCol.find(),
-      matchesCol.find(),
-      teamsCol.find(),
-      updatesCol.find(),
-    ]);
-
-    const players = allPlayers.filter(
-      (p) =>
-        p.name.toLowerCase().includes(q) ||
-        p.nationality.toLowerCase().includes(q) ||
-        p.position.toLowerCase().includes(q) ||
-        p.teamName.toLowerCase().includes(q)
-    );
-
-    const matches = allMatches.filter(
-      (m) =>
-        m.homeTeam.name.toLowerCase().includes(q) ||
-        m.awayTeam.name.toLowerCase().includes(q) ||
-        m.tournamentName.toLowerCase().includes(q) ||
-        m.venue.toLowerCase().includes(q)
-    );
-
-    const teams = allTeams.filter(
-      (t) => t.name.toLowerCase().includes(q) || t.country.toLowerCase().includes(q)
-    );
-
-    const updates = allUpdates.filter(
-      (u) => u.title.toLowerCase().includes(q) || u.summary.toLowerCase().includes(q)
-    );
-
-    res.json({ players, matches, teams, updates });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// User Profile
-app.get('/api/user/profile', (req, res) => {
-  res.json(currentUserProfile);
-});
-
-app.put('/api/user/profile', (req, res) => {
-  try {
-    const { name, email, avatar, favoriteSports, followedTeamIds, notificationsEnabled, scoreAlerts } = req.body;
-    if (name !== undefined) currentUserProfile.name = name;
-    if (email !== undefined) currentUserProfile.email = email;
-    if (avatar !== undefined) currentUserProfile.avatar = avatar;
-    if (favoriteSports !== undefined) currentUserProfile.favoriteSports = favoriteSports;
-    if (followedTeamIds !== undefined) currentUserProfile.followedTeamIds = followedTeamIds;
-    if (notificationsEnabled !== undefined) currentUserProfile.notificationsEnabled = !!notificationsEnabled;
-    if (scoreAlerts !== undefined) currentUserProfile.scoreAlerts = !!scoreAlerts;
-
-    res.json(currentUserProfile);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Bookmark toggle
-app.post('/api/user/bookmark', (req, res) => {
-  try {
-    const { type, id } = req.body; // type: 'match' | 'highlight'
-    if (type === 'match') {
-      if (currentUserProfile.bookmarkedMatchIds.includes(id)) {
-        currentUserProfile.bookmarkedMatchIds = currentUserProfile.bookmarkedMatchIds.filter((item) => item !== id);
+      if (isMongoConnected && db) {
+        await db.collection<ChatMessage>('chats').insertOne({ ...crisisReply });
       } else {
-        currentUserProfile.bookmarkedMatchIds.push(id);
+        memoryChats.push(crisisReply);
       }
-    } else if (type === 'highlight') {
-      if (currentUserProfile.bookmarkedHighlightIds.includes(id)) {
-        currentUserProfile.bookmarkedHighlightIds = currentUserProfile.bookmarkedHighlightIds.filter((item) => item !== id);
-      } else {
-        currentUserProfile.bookmarkedHighlightIds.push(id);
+      return res.json(crisisReply);
+    }
+
+    const ai = getAiClient();
+    let replyText = '';
+    let suggestions: string[] = [];
+
+    if (ai) {
+      try {
+        const systemInstruction = `You are MindEase, an empathetic, mindfulness-informed, and compassionate AI mental health companion.
+Your mission is to support users experiencing anxiety, overthinking, stress, sadness, burnout, and emotional fatigue.
+Key guidelines:
+1. Empathy & Active Listening: Validate their emotions first ("It sounds like you are carrying a lot...", "That feels so exhausting..."). Never dismiss or give shallow toxic positivity.
+2. Cognitive Defusion & Gentle Curiosity: Help them identify catastrophic assumptions gently without sounding clinical or robotic.
+3. Somatic Grounding: Offer quick physical techniques (e.g. relaxing the jaw, unclasping hands, 4-7-8 breathing) when tension is high.
+4. Boundaries: You are an AI companion, not a licensed medical doctor or therapist. You provide emotional support, coping strategies, and grounding exercises.
+5. Tone: Warm, calm, reassuring, conversational, and respectful. Keep responses readable with comfortable paragraph spacing. End with a gentle, non-pressuring question or check-in.
+${currentMood ? `The user recently logged their mood as "${currentMood}". Keep this context in mind.` : ''}`;
+
+        // Get past messages for short context
+        const contextHistory = memoryChats.slice(-6).map((m) => `${m.role === 'user' ? 'User' : 'MindEase'}: ${m.text}`).join('\n\n');
+
+        const prompt = `${contextHistory}\n\nUser: ${message}\n\nMindEase:`;
+
+        const response = await ai.models.generateContent({
+          model: 'gemini-3.8-flash',
+          contents: prompt,
+          config: {
+            systemInstruction,
+            temperature: 0.7,
+          },
+        });
+
+        replyText = response.text?.trim() || "I am right here with you. Take a slow, gentle breath. Tell me a little more about what is feeling most heavy right now.";
+
+        // Also generate 2-3 quick follow-up suggestions
+        suggestions = [
+          'Can we do a quick grounding exercise?',
+          'How can I break out of this thought loop?',
+          'What is a kind way to view this situation?',
+        ];
+      } catch (aiErr: any) {
+        console.error('[Gemini API] Chat error:', aiErr);
+        replyText = getFallbackChatResponse(message, currentMood);
+        suggestions = [
+          'Guide me through a calming breath',
+          'Help me reframe my overthinking',
+          'Give me a gentle affirmation',
+        ];
+      }
+    } else {
+      // Offline / Key missing fallback
+      replyText = getFallbackChatResponse(message, currentMood);
+      suggestions = [
+        'Guide me through a calming breath',
+        'Help me reframe my overthinking',
+        'Give me a gentle affirmation',
+      ];
+    }
+
+    const assistantMessage: ChatMessage = {
+      id: `c-ai-${Date.now()}`,
+      role: 'assistant',
+      text: replyText,
+      timestamp: new Date().toISOString(),
+      suggestions,
+    };
+
+    if (isMongoConnected && db) {
+      await db.collection<ChatMessage>('chats').insertOne({ ...assistantMessage });
+    } else {
+      memoryChats.push(assistantMessage);
+    }
+
+    res.json(assistantMessage);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 5. Overthinking Relief Analyzer & Deconstructor ("What to do depending upon overthinking")
+app.post('/api/ai/overthinking', async (req, res) => {
+  try {
+    const { thought, context } = req.body;
+    if (!thought || typeof thought !== 'string') {
+      return res.status(400).json({ error: 'Overthinking thought text is required' });
+    }
+
+    const ai = getAiClient();
+
+    if (ai) {
+      try {
+        const prompt = `The user is stuck in a painful spiral of overthinking: "${thought}".
+${context ? `Additional context: ${context}` : ''}
+
+Analyze this overthinking pattern with warmth and cognitive behavioral grounding principles.
+Respond strictly in JSON matching the required schema:
+- coreProblem: A compassionate 1-sentence summary of the underlying fear (e.g. fear of rejection, fear of failure, perfectionism).
+- distortionIdentified: The thinking trap (e.g., Catastrophizing, Mind Reading, All-or-Nothing thinking, Fortune Telling).
+- whatIsFact: Array of 2-3 verifiable concrete facts about the situation right now.
+- whatIsAssumption: Array of 2-3 unproven assumptions, worries, or story loops the brain is inventing.
+- inMyControl: Array of 2-3 concrete actions or choices the user actually has control over today.
+- outsideMyControl: Array of 2-3 things that cannot be forced or controlled (other people's thoughts, past events, future certainty).
+- calmingActionSteps: Array of 3 sequential, extremely low-friction physical and mental steps to take right now.
+- reframedPerspective: A compassionate, balanced perspective that is realistic rather than falsely positive.`;
+
+        const response = await ai.models.generateContent({
+          model: 'gemini-3.8-flash',
+          contents: prompt,
+          config: {
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                coreProblem: { type: Type.STRING },
+                distortionIdentified: { type: Type.STRING },
+                whatIsFact: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING },
+                },
+                whatIsAssumption: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING },
+                },
+                inMyControl: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING },
+                },
+                outsideMyControl: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING },
+                },
+                calmingActionSteps: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING },
+                },
+                reframedPerspective: { type: Type.STRING },
+              },
+              required: [
+                'coreProblem',
+                'distortionIdentified',
+                'whatIsFact',
+                'whatIsAssumption',
+                'inMyControl',
+                'outsideMyControl',
+                'calmingActionSteps',
+                'reframedPerspective',
+              ],
+            },
+          },
+        });
+
+        const parsed: OverthinkingAnalysis = JSON.parse(response.text?.trim() || '{}');
+        return res.json(parsed);
+      } catch (aiErr) {
+        console.error('[Gemini API] Overthinking analysis error:', aiErr);
       }
     }
-    res.json(currentUserProfile);
+
+    // High quality intelligent fallback if AI key is pending
+    const fallback = generateFallbackOverthinking(thought);
+    res.json(fallback);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 6. AI Affirmation Generator
+app.post('/api/ai/affirmation', async (req, res) => {
+  try {
+    const { feeling, challenge } = req.body;
+    const ai = getAiClient();
+
+    if (ai) {
+      try {
+        const prompt = `Generate 3 gentle, grounding, realistic mental health affirmations for someone experiencing: "${feeling || 'anxiety and self-doubt'}" with the challenge: "${challenge || 'feeling overwhelmed'}".
+Avoid toxic positivity (e.g. "Everything is amazing!"). Use compassionate, self-validating language (e.g. "I am allowed to take up space even when I am unsure").
+Return as a JSON array of strings.`;
+
+        const response = await ai.models.generateContent({
+          model: 'gemini-3.8-flash',
+          contents: prompt,
+          config: {
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING },
+            },
+          },
+        });
+
+        const affirmations = JSON.parse(response.text?.trim() || '[]');
+        return res.json({ affirmations });
+      } catch (err) {
+        console.error('[Gemini] Affirmation generation error:', err);
+      }
+    }
+
+    // Built-in intelligent affirmations
+    res.json({
+      affirmations: [
+        'My thoughts are mental events passing through, not permanent facts about my worth.',
+        'I do not need to solve the entire puzzle today; taking one quiet breath is enough.',
+        'It is safe for me to slow down. The world will wait while I regain my balance.',
+      ],
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 7. Mood Changers (Curated & AI Recommendations for Movies, Books, Stuff to do)
+app.get('/api/mood-changers', (_req, res) => {
+  res.json(curatedMoodChangers);
+});
+
+app.post('/api/ai/recommend-changers', async (req, res) => {
+  try {
+    const { currentMood, desiredShift, preferredType } = req.body;
+    const ai = getAiClient();
+
+    if (ai) {
+      try {
+        const prompt = `Recommend 3 specific, uplifting, comforting mood-changers for someone currently feeling "${currentMood || 'stressed and overthinking'}" who wants to feel "${desiredShift || 'calm, grounded, and comforted'}".
+Preferred media/activity type: ${preferredType || 'mixed (movies, books, or activities)'}.
+Return as a JSON array of objects with:
+- category: 'movie' | 'book' | 'activity'
+- title: string
+- creatorOrYear: string
+- description: 2-sentence description of the work or action
+- whyItHelps: psychological or emotional reason this shifts perspective
+- moodTarget: string
+- durationOrLength: string
+- tags: array of 3 strings`;
+
+        const response = await ai.models.generateContent({
+          model: 'gemini-3.8-flash',
+          contents: prompt,
+          config: {
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  category: { type: Type.STRING },
+                  title: { type: Type.STRING },
+                  creatorOrYear: { type: Type.STRING },
+                  description: { type: Type.STRING },
+                  whyItHelps: { type: Type.STRING },
+                  moodTarget: { type: Type.STRING },
+                  durationOrLength: { type: Type.STRING },
+                  tags: {
+                    type: Type.ARRAY,
+                    items: { type: Type.STRING },
+                  },
+                },
+                required: ['category', 'title', 'description', 'whyItHelps', 'moodTarget'],
+              },
+            },
+          },
+        });
+
+        const items = JSON.parse(response.text?.trim() || '[]');
+        const itemsWithId = items.map((item: any, idx: number) => ({
+          ...item,
+          id: `ai-mc-${Date.now()}-${idx}`,
+        }));
+        return res.json(itemsWithId);
+      } catch (err) {
+        console.error('[Gemini] Recommend changers error:', err);
+      }
+    }
+
+    // Filter matching curated items
+    const filtered = curatedMoodChangers.slice(0, 3);
+    res.json(filtered);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
 // -------------------------------------------------------------
-// VITE MIDDLEWARE & STATIC SERVING
+// FALLBACK LOGIC (When Gemini API key is missing or offline)
 // -------------------------------------------------------------
+
+function getFallbackChatResponse(message: string, currentMood?: string): string {
+  const lower = message.toLowerCase();
+
+  if (lower.includes('breath') || lower.includes('panic') || lower.includes('anxious') || lower.includes('heart')) {
+    return `I can hear how loud your nervous system is feeling right now. Let's do a gentle somatic pause together:
+
+1. Drop your shoulders down away from your ears.
+2. Unclench your jaw and let your tongue rest gently on the floor of your mouth.
+3. Inhale slowly through your nose for a count of 4... hold gently for 4... and exhale softly through your mouth like you're blowing through a straw for 6.
+
+Your body is responding to perceived threat, but right here, in this exact second, you are safe. What is one physical object in front of you that you can touch right now?`;
+  }
+
+  if (lower.includes('overthinking') || lower.includes('mistake') || lower.includes('what if') || lower.includes('regret')) {
+    return `Our minds are meaning-making machines that desperately try to predict and protect us from harm by imagining every worst-case scenario.
+
+When you notice a "what if" loop:
+• Ask yourself: "Is this thought happening in reality right now, or is it a movie my brain is screening?"
+• Notice the difference between **facts** (what an objective camera would record) and **interpretations** (the painful storylines we attach).
+
+Would you like to try our Overthinking SOS tool to unpick this specific thought step by step?`;
+  }
+
+  if (lower.includes('tired') || lower.includes('burnout') || lower.includes('exhausted') || lower.includes('cant anymore')) {
+    return `It sounds like you have been carrying an invisible backpack full of heavy stones for a very long time.
+
+Please give yourself permission to lower your standards today. You do not have to perform, optimize, or be strong right now. 
+
+What is the lowest-effort, kindest thing you could do for your body in the next 15 minutes? (Even if that just means sipping a glass of room-temperature water or laying down with your eyes closed).`;
+  }
+
+  return `Thank you for sharing that with me. It takes courage to put feelings into words, especially when things feel messy or heavy inside.
+
+${currentMood ? `I see you logged feeling ${currentMood} earlier today. ` : ''}Remember that emotions are like weather patterns—intense, stormy, and sometimes overwhelming, but they always move across the sky. You are the sky, not the weather.
+
+What feels like the heaviest part of this for you right now? I'm listening.`;
+}
+
+function generateFallbackOverthinking(thought: string): OverthinkingAnalysis {
+  return {
+    coreProblem: 'Your brain is trying to gain control over uncertainty by replaying worst-case scenarios on repeat.',
+    distortionIdentified: 'Catastrophizing & Anticipatory Anxiety (assuming the worst outcome is inevitable)',
+    whatIsFact: [
+      'You are experiencing strong feelings of uncertainty and stress in your body right now.',
+      'The event or situation has ambiguous aspects, but the catastrophic ending has not actually occurred.',
+      'You are actively seeking support and taking steps to address your well-being.',
+    ],
+    whatIsAssumption: [
+      'Assuming that feeling anxious means something terrible is definitely about to happen.',
+      'Assuming other people are judging or thinking negatively about you without concrete proof.',
+      'Assuming you will not have the resilience to cope if things do not go as planned.',
+    ],
+    inMyControl: [
+      'How you respond to your nervous system right now (taking deep breaths, resting your body).',
+      'The single next small action you choose to take today.',
+      'Choosing to speak to yourself with gentleness instead of harsh criticism.',
+    ],
+    outsideMyControl: [
+      'How other people choose to feel, react, or communicate.',
+      'Past moments or conversations that have already concluded.',
+      'Guaranteeing absolute 100% certainty about tomorrow.',
+    ],
+    calmingActionSteps: [
+      'Physical Reset: Drink a full glass of cool water and loosen the muscles in your forehead and neck.',
+      '5-Minute Rule: Give yourself a designated 5-minute "worry window", after which you gently redirect attention to an easy sensory task.',
+      'Reality Grounding: Name 3 concrete things in the room that are completely peaceful and unchanged by this worry.',
+    ],
+    reframedPerspective: 'I do not have to solve every uncertainty right now. Feeling worried is simply my mind trying to keep me safe, but I can thank my mind for trying and still choose to take a calm, gentle breath.',
+  };
+}
+
+// -------------------------------------------------------------
+// VITE MIDDLEWARE & SERVER STARTUP
+// -------------------------------------------------------------
+
 async function startServer() {
+  await initMongoDB();
+
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -1547,13 +902,13 @@ async function startServer() {
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
-    app.get('*', (req, res) => {
+    app.get('*', (_req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`SportsZone server running on http://0.0.0.0:${PORT}`);
+    console.log(`[MindEase] Server running on http://0.0.0.0:${PORT}`);
   });
 }
 

@@ -1,172 +1,84 @@
-export type SportType = 'all' | 'football' | 'cricket' | 'basketball' | 'tennis' | 'formula1';
+export type MoodType = 'great' | 'good' | 'okay' | 'anxious' | 'low' | 'overwhelmed';
 
-export type MatchStatus = 'live' | 'upcoming' | 'completed';
-
-export interface ScoreDetail {
-  homeScore: string | number;
-  awayScore: string | number;
-  periodOrOvers?: string; // e.g. "68'", "18.4 ov", "Q4 3:42", "Set 3 (5-3)"
-  currentServerOrStriker?: string;
-  summaryNote?: string; // e.g. "Real Madrid needs 18 off 8 balls" or "Half Time"
-  details?: {
-    homeInnings?: string;
-    awayInnings?: string;
-    homeBreakdown?: (string | number)[]; // sets or quarters
-    awayBreakdown?: (string | number)[];
-  };
+export interface MoodOption {
+  type: MoodType;
+  label: string;
+  emoji: string;
+  color: string;
+  bgColor: string;
+  borderColor: string;
+  score: number;
 }
 
-export interface MatchTimelineEvent {
-  time: string;
-  type: 'goal' | 'card' | 'wicket' | 'boundary' | 'basket' | 'break' | 'sub' | 'comment';
-  player?: string;
-  teamId?: string;
-  description: string;
-}
-
-export interface Match {
+export interface MoodLog {
   id: string;
-  sport: SportType;
-  tournamentId: string;
-  tournamentName: string;
-  tournamentLogo?: string;
-  homeTeam: {
-    id: string;
-    name: string;
-    shortName: string;
-    logo: string;
-  };
-  awayTeam: {
-    id: string;
-    name: string;
-    shortName: string;
-    logo: string;
-  };
-  status: MatchStatus;
-  startTime: string; // ISO string or human format
-  venue: string;
-  score: ScoreDetail;
-  events?: MatchTimelineEvent[];
-  highlightsUrl?: string;
-  hasHighlights?: boolean;
+  mood: MoodType;
+  score: number;
+  emotionTags: string[];
+  note?: string;
+  timestamp: string; // ISO string
 }
 
-export interface Tournament {
+export type PracticeType = 'gratitude' | 'affirmation' | 'journal';
+
+export interface PracticeEntry {
   id: string;
-  name: string;
-  sport: SportType;
-  logo: string;
-  season: string;
-  countryOrRegion: string;
-  teamsCount: number;
-  currentLeader?: string;
-  status: 'In Progress' | 'Upcoming' | 'Completed';
-  startDate: string;
-  endDate: string;
-}
-
-export interface StandingRow {
-  position: number;
-  teamId: string;
-  teamName: string;
-  teamLogo: string;
-  sport: SportType;
-  tournamentId: string;
-  played: number;
-  won: number;
-  drawn?: number;
-  lost: number;
-  points: number;
-  goalDiffOrNRR: string;
-  form: ('W' | 'L' | 'D')[];
-}
-
-export interface StatLeader {
-  rank: number;
-  playerId: string;
-  playerName: string;
-  playerPhoto: string;
-  teamName: string;
-  teamLogo: string;
-  sport: SportType;
-  category: string; // "Top Goal Scorers", "Top Run Scorers", "Most Wickets", "Points Per Game", "Aces"
-  value: number | string;
-  matchesPlayed: number;
-}
-
-export interface Player {
-  id: string;
-  name: string;
-  sport: SportType;
-  teamId: string;
-  teamName: string;
-  teamLogo: string;
-  jerseyNumber: number;
-  position: string;
-  nationality: string;
-  age: number;
-  photo: string;
-  stats: Record<string, string | number>;
-  bio: string;
-}
-
-export interface Team {
-  id: string;
-  name: string;
-  shortName: string;
-  sport: SportType;
-  logo: string;
-  country: string;
-  founded: number;
-  stadium: string;
-  coach: string;
-  trophies: number;
-  squad: Player[];
-}
-
-export interface SportsNewsUpdate {
-  id: string;
-  sport: SportType;
+  type: PracticeType;
   title: string;
-  summary: string;
   content: string;
-  category: 'Breaking' | 'Injury' | 'Transfer' | 'Preview' | 'Analysis';
+  promptUsed?: string;
+  moodAssociated?: MoodType;
   timestamp: string;
-  imageUrl: string;
-  readTime: string;
-  relatedMatchId?: string;
 }
 
-export interface MatchHighlight {
+export interface ChatMessage {
   id: string;
-  matchId: string;
-  sport: SportType;
+  role: 'user' | 'assistant';
+  text: string;
+  timestamp: string;
+  suggestions?: string[];
+  isCrisisAlert?: boolean;
+}
+
+export interface OverthinkingAnalysis {
+  coreProblem: string;
+  distortionIdentified: string;
+  whatIsFact: string[];
+  whatIsAssumption: string[];
+  inMyControl: string[];
+  outsideMyControl: string[];
+  calmingActionSteps: string[];
+  reframedPerspective: string;
+}
+
+export type MoodChangerCategory = 'movie' | 'book' | 'activity';
+
+export interface MoodChangerItem {
+  id: string;
+  category: MoodChangerCategory;
   title: string;
-  tournament: string;
-  duration: string;
-  thumbnail: string;
-  views: string;
-  date: string;
-  videoEmbedUrl?: string;
-  keyMoments: string[];
+  creatorOrYear?: string;
+  description: string;
+  whyItHelps: string;
+  moodTarget: string; // e.g., 'Anxiety & Racing Mind', 'Low Energy & Sadness', 'Overwhelmed & Burnt Out'
+  durationOrLength?: string;
+  tags: string[];
 }
 
-export interface UserProfile {
-  id: string;
+export interface CrisisResource {
   name: string;
-  email: string;
-  avatar: string;
-  favoriteSports: SportType[];
-  followedTeamIds: string[];
-  bookmarkedMatchIds: string[];
-  bookmarkedHighlightIds: string[];
-  notificationsEnabled: boolean;
-  scoreAlerts: boolean;
+  phone: string;
+  sms?: string;
+  website?: string;
+  availableHours: string;
+  description: string;
+  region: string;
 }
 
-export interface SearchResults {
-  players: Player[];
-  matches: Match[];
-  teams: Team[];
-  updates: SportsNewsUpdate[];
+export interface AppServerStatus {
+  mongodbConnected: boolean;
+  databaseName?: string;
+  aiReady: boolean;
+  totalMoodLogs: number;
+  totalPractices: number;
 }

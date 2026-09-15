@@ -1,6 +1,8 @@
 {
-  "name": "SportsZone - Live Scores, Fixtures & Stats",
-  "description": "Full-stack sports platform with live scores, upcoming fixtures, tournaments, standings, statistics, team/player rosters, highlights, and sports news.",
+  "name": "MindEase - Mental Health AI Support & Wellness Platform",
+  "description": "Full-stack mental health platform featuring compassionate AI chat assistance, daily mood tracking, gratitude, affirmations, journaling, overthinking relief tools, and uplifting mood-changer recommendations.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }
